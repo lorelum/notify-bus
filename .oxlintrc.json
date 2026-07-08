@@ -15,8 +15,8 @@
   },
   "ignorePatterns": [
     "node_modules/",
-    "web/dist/",
-    "web/node_modules/",
+    "packages/web/dist/",
+    "packages/web/node_modules/",
     "data/",
     "dist/",
     "build/"
