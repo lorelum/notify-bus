@@ -1,5 +1,5 @@
 {
-  "name": "notify-bus-web",
+  "name": "@notify-bus/web",
   "private": true,
   "version": "0.0.0-dev",
   "type": "module",
@@ -16,6 +16,7 @@
     "@elysia/eden": "^1.4.10"
   },
   "devDependencies": {
+    "@notify-bus/server": "workspace:*",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^6.0.0",

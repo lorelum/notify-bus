@@ -12,11 +12,11 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently -n server,web -c blue,green 'bun run --watch packages/server/src/index.ts' 'bun --cwd packages/web run dev'",
+    "dev": "concurrently -n server,web -c blue,green 'bun run --watch packages/server/src/index.ts' 'cd packages/web && bun run dev'",
     "dev:server": "bun run --watch packages/server/src/index.ts",
-    "dev:web": "bun --cwd packages/web run dev",
+    "dev:web": "cd packages/web && bun run dev",
     "build": "bun run build:web",
-    "build:web": "bun --cwd packages/web run build",
+    "build:web": "cd packages/web && bun run build",
     "start": "bun run packages/server/src/index.ts",
     "test": "bun test",
     "lint": "oxlint --react-plugin .",
