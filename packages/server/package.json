@@ -1,0 +1,24 @@
+{
+  "name": "@notify-bus/server",
+  "version": "0.0.0-dev",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./types": "./src/types.ts"
+  },
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "elysia": "1.4.29",
+    "@elysiajs/static": "1.4.10",
+    "handlebars": "4.7.9"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14"
+  }
+}

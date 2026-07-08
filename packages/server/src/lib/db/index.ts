@@ -11,6 +11,7 @@
  *   - For a single Bun process this is safe. If you ever scale to multiple
  *     processes sharing one .db, keep WAL + set busy_timeout.
  */
+import { mkdirSync } from "node:fs";
 import { Database } from "bun:sqlite";
 
 let dbInstance: Database | null = null;
@@ -26,8 +27,8 @@ let dbInstance: Database | null = null;
 export function getDb(dataDir: string = "./data"): Database {
   if (dbInstance) return dbInstance;
 
-  // Ensure the data directory exists (Bun's mkdir is recursive).
-  Bun.mkdirSync(dataDir, { recursive: true });
+  // Ensure the data directory exists (recursive).
+  mkdirSync(dataDir, { recursive: true });
 
   const dbPath = `${dataDir}/notify-bus.db`;
   const db = new Database(dbPath, { create: true });

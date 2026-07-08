@@ -20,7 +20,7 @@ import { Elysia } from "elysia";
 
 export const webhookRoute = new Elysia().post(
   "/webhook",
-  async ({ request, set, headers }) => {
+  async ({ set, headers }) => {
     // M1 TODO (in order):
     //   1. Read the raw body ONCE, before any parse. Stash it.
     //      const raw = new Uint8Array(await request.arrayBuffer());

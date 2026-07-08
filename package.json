@@ -19,8 +19,8 @@
     "build:web": "bun --cwd packages/web run build",
     "start": "bun run packages/server/src/index.ts",
     "test": "bun test",
-    "lint": "oxlint .",
-    "lint:fix": "oxlint --fix .",
+    "lint": "oxlint --react-plugin .",
+    "lint:fix": "oxlint --react-plugin --fix .",
     "fmt": "oxfmt --write .",
     "fmt:check": "oxfmt --check .",
     "typecheck": "tsc -b"
