@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+/* Tailwind v4: theme via CSS @theme, no tailwind.config.js.
+   Add design tokens here as the UI grows (M4–M5). */
+
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
