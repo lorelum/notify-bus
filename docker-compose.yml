@@ -1,0 +1,28 @@
+# notify-bus — self-hosted single-container deploy.
+#
+# Usage:
+#   1. cp .env.example .env  &&  set GITHUB_WEBHOOK_SECRET
+#   2. cp config.example.yaml config.yaml  &&  edit channels/routes
+#   3. docker compose up -d
+#
+# The container serves the API + built frontend on :3000.
+# Point your GitHub webhook at https://your-host/webhook.
+
+services:
+  notify-bus:
+    build: .
+    image: notify-bus:latest
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
+      - DATA_DIR=/app/data
+      - CONFIG_PATH=/app/config.yaml
+    volumes:
+      # ★ Mount the directory, not the single .db — WAL sidecars (-wal, -shm)
+      #   must live in the volume or durability is lost on restart.
+      - ./data:/app/data
+      - ./config.yaml:/app/config.yaml:ro

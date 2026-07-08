@@ -1,0 +1,37 @@
+# notify-bus seed config.
+#
+# Copy to config.yaml (gitignored) and edit. The admin UI / SQLite store is
+# the live source of truth; this YAML is seed/bootstrap only — the DB wins
+# on conflict. See src/lib/config/index.ts.
+#
+# All fields are optional. Running DB-only (no config.yaml) is valid.
+
+channels:
+  - name: team-feishu
+    type: feishu
+    webhook_url: https://open.feishu.cn/open-apis/bot/v2/hook/REPLACE_ME
+    secret: "" # optional: feishu signing secret, if enabled on the bot
+    enabled: true
+
+routes:
+  - name: all-events-to-team
+    match_repo: "*" # glob; '*' matches every repo
+    # match_event: push,pull_request # omit / leave null to match all events
+    # match_action: opened,closed    # omit to match all actions
+    target_channel: team-feishu # resolved by name to a channel above
+    priority: 100 # lower = higher priority; first match wins
+    enabled: true
+
+templates:
+  - event_type: push
+    template: |
+      【仓库】{{repository.full_name}}
+      【事件】{{event}}
+      【用户】{{actor.login}}
+      {{#if ref}}【分支】{{ref}}{{/if}}
+      {{#if payload.commits}}
+      ⚠️ 最新提交：
+      {{#each payload.commits}}
+      - {{this.message}} ({{this.author.name}})
+      {{/each}}
+      {{/if}}
