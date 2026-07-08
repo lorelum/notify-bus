@@ -38,7 +38,7 @@ Your team lives in GitHub and chats in Feishu / Lark. Every push, PR, issue, rel
 - **Webhook in, notifications out.** Verify GitHub's HMAC-SHA256 signature against the raw body, parse the event, run it through a configurable middleware pipeline, render a template, and dispatch.
 - **Multi-channel by design, not by accident.** A `ChannelAdapter` interface is the only thing a new channel needs to implement. Feishu is the first adapter; the routing and config layer is channel-agnostic.
 - **Configure without redeploying.** A built-in admin UI (React + Vite + Tailwind) edits routes, channels, and templates against a REST API — backed by `bun:sqlite`. No YAML round-trips to adjust a rule.
-- **One image, one process.** Ships as a single Bun process that serves the API *and* the built frontend. One Docker container, one volume for data.
+- **One image, one process.** Ships as a single Bun process that serves the API *and* the built frontend. One Docker container, one volume for data. The repo is a Bun workspace monorepo (`packages/server` + `packages/web`) that builds into that one image.
 
 ## 5-minute tour
 
@@ -46,7 +46,7 @@ Your team lives in GitHub and chats in Feishu / Lark. Every push, PR, issue, rel
 
 ```bash
 # Run locally
-bun install
+bun install                # installs all workspace packages
 cp .env.example .env       # set GITHUB_WEBHOOK_SECRET
 bun run dev                # server on :3000, frontend on :5173 (Vite proxy)
 

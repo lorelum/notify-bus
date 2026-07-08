@@ -37,21 +37,22 @@ Everyone participating in notify-bus is expected to follow our [Code of Conduct]
 ```bash
 git clone https://github.com/lorelum/notify-bus.git
 cd notify-bus
-bun install
+bun install          # installs all workspace packages (server + web)
 cp .env.example .env   # then set GITHUB_WEBHOOK_SECRET
 ```
 
-**Common commands**
+**Common commands** (run from the repo root — they cover both packages)
 
 | Task | Command |
 |---|---|
 | Run server + frontend (dev) | `bun run dev` |
-| Run frontend only (Vite) | `bun run dev:web` |
+| Run server only (dev) | `bun run dev:server` |
+| Run frontend only (dev) | `bun run dev:web` |
 | Run tests | `bun test` |
 | Lint | `bun run lint` (oxlint) |
 | Format | `bun run fmt` (oxfmt) |
-| Typecheck | `bun run typecheck` (`tsc --noEmit`) |
-| Build (server + frontend) | `bun run build` |
+| Typecheck | `bun run typecheck` (`tsc -b` — both packages) |
+| Build frontend | `bun run build` |
 | Start production server | `bun run start` |
 
 ## How we work: issue-driven, design-first
@@ -203,13 +204,13 @@ If a PR spans multiple types, pick the **most significant** change as the type (
 
 ## Testing & CI
 
-Tests run on `bun:test`, linting on `oxlint`, formatting on `oxfmt`, typecheck via `tsc --noEmit`.
+Tests run on `bun:test`, linting on `oxlint`, formatting on `oxfmt`, typecheck via `tsc -b` (project references, covers both `packages/server` and `packages/web`).
 
 - **Unit tests ship with new code.** Colocate tests as `*.test.ts` next to the source they cover.
 - **Coverage:** aim to keep or improve coverage on touched code. New behavior needs tests.
-- **Lint and typecheck:** `oxlint` and `tsc --noEmit` must pass. No silencing the type checker or linter without justification in the PR.
-- **Mock filesystem, network, and the clock in unit tests** — never hit the real Feishu API or a real GitHub webhook in unit tests. The Feishu signer has a known-good vector test (see `src/lib/adapters/feishu.ts`).
-- **Signature verification is security-critical.** Any change to `src/lib/verify/github.ts` or the webhook raw-body capture path needs a regression test that fails before the fix and passes after.
+- **Lint and typecheck:** `oxlint` and `tsc -b` must pass. No silencing the type checker or linter without justification in the PR.
+- **Mock network and the filesystem** — never hit the real Feishu API or a real GitHub webhook in unit tests. The Feishu signer has a known-good vector test (see `packages/server/src/lib/adapters/feishu.ts`).
+- **Signature verification is security-critical.** Any change to `packages/server/src/lib/verify/github.ts` or the webhook raw-body capture path needs a regression test that fails before the fix and passes after.
 
 CI runs build, lint, typecheck, and test on every PR. A PR cannot merge until all gates are green.
 

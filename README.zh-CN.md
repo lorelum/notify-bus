@@ -38,7 +38,7 @@
 - **Webhook 进，通知出。** 用原始 body 校验 GitHub 的 HMAC-SHA256 签名，解析事件，跑过可配置的中间件管道，渲染模板，分发。
 - **天生多渠道，不是事后补的。** 新渠道只需实现 `ChannelAdapter` 接口。飞书是第一个适配器；路由和配置层与渠道无关。
 - **改配置不用重新部署。** 内置管理后台（React + Vite + Tailwind）通过 REST API 编辑路由、渠道、模板 —— 底层是 `bun:sqlite`。调规则不用再走 YAML 往返。
-- **一个镜像，一个进程。** 单个 Bun 进程同时提供 API *和* 构建好的前端。一个 Docker 容器，一个数据卷。
+- **一个镜像，一个进程。** 单个 Bun 进程同时提供 API *和* 构建好的前端。一个 Docker 容器，一个数据卷。仓库是 Bun workspace monorepo（`packages/server` + `packages/web`），构建产物汇入同一个镜像。
 
 ## 5 分钟体验
 
@@ -46,7 +46,7 @@
 
 ```bash
 # 本地运行
-bun install
+bun install                # 一次装全所有 workspace 包
 cp .env.example .env       # 设置 GITHUB_WEBHOOK_SECRET
 bun run dev                # 服务在 :3000，前端在 :5173（Vite 代理）
 

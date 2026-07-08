@@ -4,14 +4,14 @@
 
 ## Project
 
-notify-bus is a self-hostable, multi-channel notification bus. It ingests GitHub webhooks, runs them through a configurable middleware pipeline, and dispatches rendered messages to channel adapters (Feishu first; Slack / DingTalk / WeCom / Discord to follow). This repo holds the server, pipeline, adapters, admin frontend, and format spec — all in one.
+notify-bus is a self-hostable, multi-channel notification bus. It ingests GitHub webhooks, runs them through a configurable middleware pipeline, and dispatches rendered messages to channel adapters (Feishu first; Slack / DingTalk / WeCom / Discord to follow). This repo holds the server, pipeline, adapters, admin frontend, and format spec.
 
-The codebase is **Bun + TypeScript**, structured as a **single package** with the server in `src/` and the admin frontend in `web/`. No monorepo workspaces — one `package.json`, one lockfile, one Docker image.
+The codebase is **Bun + TypeScript**, organized as a **Bun workspace monorepo** (`packages/*`). One `package.json` at the root declares `workspaces: ["packages/*"]`; a single `bun install` installs every package. No turborepo — two packages with independent tasks don't need it.
 
 The product contract to be aware of:
-- **`ChannelAdapter` interface** (`src/lib/adapters/types.ts`) — every channel implements it. Breaking it breaks every adapter.
+- **`ChannelAdapter` interface** (`packages/server/src/lib/adapters/types.ts`) — every channel implements it. Breaking it breaks every adapter.
 - **Pipeline / middleware interface** — the `(event, next) => void` shape. Changes ripple to every middleware.
-- **`EventMessage` type** (`src/types.ts`) — the internal event representation everything else reads/writes.
+- **`EventMessage` type** (`packages/server/src/types.ts`) — the internal event representation everything else reads/writes.
 - **REST API** (`/api/*`) — the frontend and any external automation depend on it.
 - **Webhook contract** (`POST /webhook`) — GitHub sends to this; the raw-body capture for signature verification is security-critical.
 
@@ -19,44 +19,54 @@ The product contract to be aware of:
 
 ```
 notify-bus/
-├── src/                  # Bun + Elysia server (TypeScript, run natively)
-│   ├── index.ts          # Elysia entry: webhook + /api + static(web/dist) + /health
-│   ├── routes/
-│   │   ├── webhook.ts    # POST /webhook — ★ raw body must be captured before JSON parse
-│   │   ├── health.ts
-│   │   └── api/          # /api/routes /channels /templates /logs
-│   ├── lib/
-│   │   ├── verify/
-│   │   │   └── github.ts # HMAC-SHA256, constant-time compare
-│   │   ├── pipeline/     # middleware chain
-│   │   ├── adapters/
-│   │   │   ├── types.ts  # ★ ChannelAdapter interface
-│   │   │   └── feishu.ts # Feishu adapter (signing: timestamp\nsecret as HMAC key, empty msg, base64)
-│   │   ├── config/       # YAML + sqlite load + merge
-│   │   └── db/
-│   │       ├── schema.ts # routes / channels / templates / logs
-│   │       └── index.ts  # bun:sqlite, WAL + busy_timeout + synchronous=NORMAL
-│   └── types.ts          # EventMessage etc.
-├── web/                  # React + Vite + Tailwind + shadcn/ui admin frontend
-│   ├── src/
-│   └── dist/             # built output, served by Elysia (gitignored)
-├── config.example.yaml   # seed config sample
-├── Dockerfile            # multi-stage, oven/bun:1.3
-├── docker-compose.yml    # mounts ./data (directory, not single .db — WAL sidecars)
+├── package.json              # root: workspaces: ["packages/*"], aggregate scripts
+├── tsconfig.base.json        # shared strict TS options
+├── tsconfig.json             # project references -> packages/server + packages/web
+├── packages/
+│   ├── server/               # @notify-bus/server — Bun + Elysia (run natively)
+│   │   ├── package.json
+│   │   ├── tsconfig.json     # extends ../../tsconfig.base.json
+│   │   └── src/
+│   │       ├── index.ts      # Elysia entry: webhook + /api + static(web/dist) + /health
+│   │       ├── routes/
+│   │       │   ├── webhook.ts    # POST /webhook — ★ raw body must be captured before JSON parse
+│   │       │   ├── health.ts
+│   │       │   └── api/          # /api/routes /channels /templates /logs
+│   │       ├── lib/
+│   │       │   ├── verify/
+│   │       │   │   └── github.ts # HMAC-SHA256, constant-time compare
+│   │       │   ├── pipeline/     # middleware chain
+│   │       │   ├── adapters/
+│   │       │   │   ├── types.ts  # ★ ChannelAdapter interface
+│   │       │   │   └── feishu.ts # Feishu adapter (signing: timestamp\nsecret as HMAC key, empty msg, base64)
+│   │       │   ├── config/       # YAML + sqlite load + merge
+│   │       │   └── db/
+│   │       │       ├── schema.ts # routes / channels / templates / logs
+│   │       │       └── index.ts  # bun:sqlite, WAL + busy_timeout + synchronous=NORMAL
+│   │       └── types.ts          # EventMessage etc.
+│   └── web/                  # @notify-bus/web — React + Vite + Tailwind admin frontend
+│       ├── package.json      # devDep @notify-bus/server (workspace:*) for M4 Eden types
+│       ├── tsconfig.json     # extends ../../tsconfig.base.json
+│       ├── vite.config.ts
+│       └── src/              # dist/ is gitignored (built by `bun run build:web`)
+├── config.example.yaml       # seed config sample
+├── Dockerfile                # multi-stage, oven/bun:1.3, single workspace install
+├── docker-compose.yml        # mounts ./data (directory, not single .db — WAL sidecars)
 └── .github/workflows/ci.yml
 ```
 
 ## Commands
 
 - **Runtime:** Bun ≥ 1.3 (TypeScript support is built in — no separate `tsc`/Node install needed)
-- **Install deps:** `bun install`
+- **Install deps:** `bun install` (installs all workspace packages)
 - **Dev (server + frontend):** `bun run dev`
+- **Dev server only:** `bun run dev:server`
 - **Dev frontend only:** `bun run dev:web`
-- **Test:** `bun test` (uses `bun:test`)
-- **Lint:** `bun run lint` (oxlint)
+- **Test:** `bun test` (uses `bun:test`, runs from root)
+- **Lint:** `bun run lint` (oxlint, covers both packages)
 - **Format:** `bun run fmt` (oxfmt)
-- **Typecheck:** `bun run typecheck` (`tsc --noEmit`)
-- **Build:** `bun run build` (builds `web/` then server)
+- **Typecheck:** `bun run typecheck` (`tsc -b` — project references, covers both packages)
+- **Build:** `bun run build` (builds the frontend; server runs TS natively)
 - **Start (prod):** `bun run start`
 
 ## Code style
@@ -71,7 +81,7 @@ TypeScript is the language; Bun runs it. These rules apply from day one.
 
 ## Security-critical rules (read these twice)
 
-1. **GitHub webhook signature = HMAC-SHA256 over the *raw request body*.** The raw bytes must be captured *before* any JSON parsing. Never `JSON.parse` then `JSON.stringify` and re-sign — byte ordering/whitespace diverges and verification fails. Compare with constant-time equality. See `src/routes/webhook.ts` for the capture hook.
+1. **GitHub webhook signature = HMAC-SHA256 over the *raw request body*.** The raw bytes must be captured *before* any JSON parsing. Never `JSON.parse` then `JSON.stringify` and re-sign — byte ordering/whitespace diverges and verification fails. Compare with constant-time equality. See `packages/server/src/routes/webhook.ts` for the capture hook.
 2. **Feishu signing is counter-intuitive.** The HMAC *key* is `timestamp + "\n" + secret`, the *message* is empty, output is base64. The message body is never part of the signature. There is a known-good test vector — keep it green.
 3. **`GITHUB_WEBHOOK_SECRET` lives only in an env var.** Never persist it to the DB, config file, or logs.
 4. **Channel credentials (webhook URLs, signing secrets) are stored in the config DB.** The admin API returns webhook URLs partially masked; full values are write-only over the API.
