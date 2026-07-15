@@ -5,6 +5,12 @@
 # on conflict. See src/lib/config/index.ts.
 #
 # All fields are optional. Running DB-only (no config.yaml) is valid.
+#
+# NOTE on templates: the Feishu adapter builds a rich card per event type
+# (header color, buttons, stat tiles) in code. A template here only controls
+# the *body markdown* that is folded into the card — keep it short and
+# complementary to what the card already shows. Omit the template entirely
+# to use the built-in defaults. See packages/server/src/lib/adapters/feishu-cards.ts.
 
 channels:
   - name: team-feishu
@@ -22,16 +28,27 @@ routes:
     priority: 100 # lower = higher priority; first match wins
     enabled: true
 
+# Templates below are OPTIONAL. Each controls only the body markdown folded
+# into that event type's card. The card structure (colors, buttons, commits)
+# is built in code regardless. Remove a template to use the built-in default.
 templates:
   - event_type: push
     template: |
-      【仓库】{{repository.full_name}}
-      【事件】{{event}}
-      【用户】{{actor.login}}
-      {{#if ref}}【分支】{{ref}}{{/if}}
-      {{#if payload.commits}}
-      ⚠️ 最新提交：
-      {{#each payload.commits}}
-      - {{this.message}} ({{this.author.name}})
-      {{/each}}
+      {{#if payload.head_commit}}
+      Latest: {{payload.head_commit.message}}
+      {{/if}}
+  - event_type: pull_request
+    template: |
+      {{#if payload.pull_request.body}}
+      > {{payload.pull_request.body}}
+      {{/if}}
+  - event_type: issues
+    template: |
+      {{#if payload.issue.body}}
+      > {{payload.issue.body}}
+      {{/if}}
+  - event_type: release
+    template: |
+      {{#if payload.release.body}}
+      {{payload.release.body}}
       {{/if}}
