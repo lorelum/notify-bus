@@ -63,10 +63,13 @@ function mapCode(code: number, msg: string): ChannelError {
 /**
  * Build the Feishu interactive-card payload from a rendered EventMessage.
  *
- * Structure (header color, layout, buttons, card link) comes from
+ * Structure (header color, badges, layout, buttons) comes from
  * {@link buildCard} — a per-event-type builder. The body markdown comes from
  * `message.formatted?.body` (the configured template, or the render layer's
  * default) and is folded in by the builder as content.
+ *
+ * The whole card is NOT clickable — links live in explicit buttons and inline
+ * markdown links only.
  */
 function buildCardPayload(
   message: EventMessage,
@@ -81,19 +84,21 @@ function buildCardPayload(
   if (card.header.subtitle) {
     header.subtitle = { tag: "plain_text", content: card.header.subtitle };
   }
-
-  const feishuCard: Record<string, unknown> = {
-    schema: "2.0",
-    header,
-    body: { elements: card.elements },
-  };
-  if (card.cardLink) {
-    feishuCard.card_link = { url: card.cardLink };
+  if (card.header.badges && card.header.badges.length > 0) {
+    header.text_tag_list = card.header.badges.map((b) => ({
+      tag: "text_tag",
+      text: { tag: "plain_text", content: b.text },
+      color: b.color,
+    }));
   }
 
   const payload: Record<string, unknown> = {
     msg_type: "interactive",
-    card: feishuCard,
+    card: {
+      schema: "2.0",
+      header,
+      body: { elements: card.elements },
+    },
   };
   if (timestamp !== undefined && sign !== undefined) {
     payload.timestamp = timestamp;
