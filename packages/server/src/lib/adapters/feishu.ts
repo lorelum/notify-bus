@@ -15,6 +15,7 @@
 import { createHmac } from "node:crypto";
 import type { ChannelAdapter, ChannelError, ChannelSendResult } from "./types";
 import type { EventMessage } from "../../types";
+import { buildCard } from "./feishu-cards";
 
 export const feishuCapabilities = {
   messageTypes: ["text", "post", "interactive"] as const,
@@ -61,22 +62,42 @@ function mapCode(code: number, msg: string): ChannelError {
 
 /**
  * Build the Feishu interactive-card payload from a rendered EventMessage.
- * Uses card schema 2.0: header (green, title) + a markdown body element.
+ *
+ * Structure (header color, badges, layout, buttons) comes from
+ * {@link buildCard} — a per-event-type builder. The body markdown comes from
+ * `message.formatted?.body` (the configured template, or the render layer's
+ * default) and is folded in by the builder as content.
+ *
+ * The whole card is NOT clickable — links live in explicit buttons and inline
+ * markdown links only.
  */
-function buildCardPayload(message: EventMessage, timestamp?: number, sign?: string): Record<string, unknown> {
-  const title = message.formatted?.title ?? `${message.event} on ${message.repository.full_name}`;
-  const body = message.formatted?.body ?? "";
+function buildCardPayload(
+  message: EventMessage,
+  timestamp?: number,
+  sign?: string,
+): Record<string, unknown> {
+  const card = buildCard(message);
+  const header: Record<string, unknown> = {
+    title: { tag: "plain_text", content: card.header.title },
+    template: card.header.template,
+  };
+  if (card.header.subtitle) {
+    header.subtitle = { tag: "plain_text", content: card.header.subtitle };
+  }
+  if (card.header.badges && card.header.badges.length > 0) {
+    header.text_tag_list = card.header.badges.map((b) => ({
+      tag: "text_tag",
+      text: { tag: "plain_text", content: b.text },
+      color: b.color,
+    }));
+  }
+
   const payload: Record<string, unknown> = {
     msg_type: "interactive",
     card: {
       schema: "2.0",
-      header: {
-        title: { tag: "plain_text", content: title },
-        template: "green",
-      },
-      body: {
-        elements: [{ tag: "markdown", content: body }],
-      },
+      header,
+      body: { elements: card.elements },
     },
   };
   if (timestamp !== undefined && sign !== undefined) {
