@@ -349,7 +349,9 @@ function buildIssuesCard(message: EventMessage, body: string): FeishuCard {
   const p = message.payload;
   const repo = message.repository.full_name;
   const repoUrl = message.repository.html_url;
-  const number = asNum(p.number);
+  // GitHub's `issues` webhook nests the number under `issue.number` (unlike
+  // `pull_request`, which has a top-level `number`). Read both for safety.
+  const number = asNum(asObj(p.issue).number) ?? asNum(p.number);
   const action = message.action ?? asStr(p.action) ?? "updated";
   const issue = asObj(p.issue);
   const title = asStr(issue.title) ?? "(untitled)";
@@ -363,16 +365,19 @@ function buildIssuesCard(message: EventMessage, body: string): FeishuCard {
   if (issueBody) elements.push(markdown(`> ${issueBody.replace(/\n/g, "\n> ")}`));
   if (body) elements.push(markdown(body));
 
-  // Info row: author | labels (up to 3 colored pills).
+  // Info row: author | labels (up to 3 colored pills). When there are no
+  // labels, render the author full-width instead of an empty label column.
   const labelColors: TagColor[] = ["blue", "turquoise", "orange", "violet", "green"];
-  const labelText = labels.length
-    ? `🏷️ ${labels.slice(0, 3).map((l, i) => textTag(labelColors[i % labelColors.length]!, l)).join(" ")}`
-    : "";
   elements.push(hr());
-  elements.push(columnSet([
-    [markdown(`👤 **${md(user)}**`)],
-    [markdown(labelText || " ")],
-  ]));
+  if (labels.length > 0) {
+    const labelText = `🏷️ ${labels.slice(0, 3).map((l, i) => textTag(labelColors[i % labelColors.length]!, l)).join(" ")}`;
+    elements.push(columnSet([
+      [markdown(`👤 **${md(user)}**`)],
+      [markdown(labelText)],
+    ]));
+  } else {
+    elements.push(markdown(`👤 **${md(user)}**`));
+  }
 
   elements.push(note(`${repo} · notify-bus`));
   elements.push(linkButton("View Issue", issueUrl));

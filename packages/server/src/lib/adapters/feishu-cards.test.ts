@@ -241,6 +241,42 @@ describe("buildCard · issues", () => {
     expect(text).toContain('<text_tag color="blue">bug</text_tag>');
     expect(text).toContain('<text_tag color="turquoise">enhancement</text_tag>');
   });
+
+  it("reads the issue number from payload.issue.number (not top-level)", () => {
+    // Real `issues` webhook payloads nest the number under `issue.number`,
+    // with NO top-level `number`. Regression for the '#?' bug (#8).
+    const card = buildCard(
+      msg("issues", {
+        action: "opened",
+        issue: {
+          number: 42,
+          title: "Something broke",
+          html_url: "https://github.com/org/repo/issues/42",
+          user: { login: "carol" },
+        },
+      }, { action: "opened" }),
+    );
+    expect(card.header.title).toBe("📌 Issue #42");
+  });
+
+  it("does not render a label column when the issue has no labels", () => {
+    const card = buildCard(
+      msg("issues", {
+        action: "opened",
+        issue: {
+          number: 5,
+          title: "No labels here",
+          html_url: "u",
+          user: { login: "c" },
+          labels: [],
+        },
+      }, { action: "opened" }),
+    );
+    const text = elementMarkdown(card.elements);
+    expect(text).not.toContain("🏷️");
+    // Author still present.
+    expect(text).toContain("👤");
+  });
 });
 
 describe("buildCard · release", () => {
