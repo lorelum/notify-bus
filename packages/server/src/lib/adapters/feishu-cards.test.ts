@@ -369,6 +369,51 @@ describe("buildCard · fallback", () => {
     const card = buildCard(emptyUrlMsg);
     expect(findButtonUrls(card.elements).length).toBe(0);
   });
+
+  it("labels View Repo (not View Org) for a repo event whose repo belongs to an org (#13)", () => {
+    // GitHub repo-scoped payloads include BOTH repository AND organization
+    // when the repo is org-owned. Must not be misdetected as an org event.
+    const card = buildCard(msg("issue_comment", {
+      action: "created",
+      repository: { full_name: "org/repo", html_url: "https://github.com/org/repo" },
+      organization: { login: "org" },
+    }, { action: "created" }));
+    // No "View Org" label anywhere in the rendered button.
+    const btns = card.elements.filter((e) => (e as { tag?: string }).tag === "button");
+    for (const b of btns) {
+      const content = (b as { text?: { content?: string } }).text?.content ?? "";
+      expect(content).not.toBe("View Org");
+    }
+  });
+
+  it("surfaces comment body + issue title/number for issue_comment (#13)", () => {
+    const card = buildCard(msg("issue_comment", {
+      action: "created",
+      issue: { number: 42, title: "Login broken", html_url: "https://github.com/org/repo/issues/42" },
+      comment: { body: "I can reproduce on Safari", html_url: "https://github.com/org/repo/issues/42#issuecomment-1" },
+      repository: { full_name: "org/repo", html_url: "https://github.com/org/repo" },
+    }, { action: "created" }));
+    const text = elementMarkdown(card.elements);
+    expect(text).toContain("Login broken");
+    expect(text).toContain("#42");
+    expect(text).toContain("I can reproduce on Safari");
+    // Button links to the comment and is labeled "View Comment".
+    const urls = findButtonUrls(card.elements);
+    expect(urls).toContain("https://github.com/org/repo/issues/42#issuecomment-1");
+  });
+
+  it("labels View Org only for true org-scoped events (no repository in payload)", () => {
+    // No `repository` key -> genuinely org-scoped -> "View Org".
+    const card = buildCard(msg("organization", {
+      action: "member_added",
+      membership: { user: { login: "x" } },
+      organization: { login: "someorg", html_url: "https://github.com/someorg" },
+    }, { action: "member_added" }));
+    // Note: msg() normalizes repository to org/repo; the discriminator is the
+    // RAW payload.repository, which is absent here. Expect View Org label.
+    const btn = card.elements.find((e) => (e as { tag?: string }).tag === "button");
+    expect((btn as { text?: { content?: string } }).text?.content).toBe("View Org");
+  });
 });
 
 describe("buildCard · no whole-card link", () => {
