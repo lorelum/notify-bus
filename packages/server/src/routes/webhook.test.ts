@@ -171,3 +171,41 @@ describe("webhook route with no matching route", () => {
     expect(calls.length).toBe(0);
   });
 });
+
+describe("webhook route normalizes org-scoped events", () => {
+  const originalFetch = globalThis.fetch;
+  beforeEach(() => {
+    globalThis.fetch = mock(() => Promise.resolve(new Response("{}"))) as unknown as typeof fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("derives repo name + url from `organization` when `repository` is absent (#6)", async () => {
+    const { adapter, calls } = makeFakeAdapter("success");
+    const app = buildWebhookRoute({
+      config,
+      adapters: new Map([["feishu", adapter]]),
+      secret: SECRET,
+    });
+    // Org-scoped payload: no top-level `repository`, has `organization`.
+    const body = JSON.stringify({
+      action: "member_added",
+      membership: { role: "member", user: { login: "newperson", html_url: "https://github.com/newperson" } },
+      organization: { login: "lorelum", html_url: "https://github.com/lorelum" },
+      sender: { login: "admin", avatar_url: "" },
+    });
+    const { status, json } = await postWebhook(app, body, {
+      "x-github-event": "organization",
+      "x-hub-signature-256": sign(body, SECRET),
+    });
+    expect(status).toBe(200);
+    // The route matched and dispatched (catch-all route) and the response
+    // carries the derived org name, NOT "unknown/unknown".
+    expect((json as { repo?: string }).repo).toBe("lorelum");
+    expect(calls.length).toBe(1);
+    // The message that reached the adapter also has the org-derived name.
+    expect(calls[0]?.repository.full_name).toBe("lorelum");
+    expect(calls[0]?.repository.html_url).toBe("https://github.com/lorelum");
+  });
+});
