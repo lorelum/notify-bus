@@ -476,15 +476,40 @@ function buildForkCard(message: EventMessage, body: string): FeishuCard {
 }
 
 function buildFallbackCard(message: EventMessage, body: string): FeishuCard {
+  const p = message.payload;
   const repo = message.repository.full_name;
   const repoUrl = message.repository.html_url;
-  const content =
-    body ||
-    `**${md(message.event)}**${message.action ? ` · ${md(message.action)}` : ""}\n` +
-      `👤 **${md(message.actor.login)}**`;
+
+  // Build a richer body than just "event · action": surface org/member
+  // details when present (covers organization / member / team events that
+  // otherwise render as bare event names).
+  const lines: string[] = [];
+  lines.push(`**${md(message.event)}**${message.action ? ` · ${md(message.action)}` : ""}`);
+  // membership.user (member added/removed) + role.
+  const membership = asObj(p.membership);
+  const memberUser = asObj(membership.user);
+  const memberLogin = asStr(memberUser.login);
+  const memberRole = asStr(membership.role);
+  if (memberLogin) {
+    const memberUrl = asStr(memberUser.html_url);
+    lines.push(`👤 ${memberUrl ? `[${md(memberLogin)}](${memberUrl})` : `**${md(memberLogin)}**`}${memberRole ? ` · \`${memberRole}\`` : ""}`);
+  } else {
+    lines.push(`👤 **${md(message.actor.login)}**`);
+  }
+  const orgLogin = asStr(asObj(p.organization).login);
+  if (orgLogin && orgLogin !== repo) {
+    lines.push(`🏢 ${md(orgLogin)}`);
+  }
+  const content = body || lines.join("\n");
+
   const elements: CardElement[] = [markdown(content)];
   elements.push(note(`${repo} · notify-bus`));
-  elements.push(linkButton("View Repo", repoUrl, "default"));
+  // Only emit a button when there's a real URL — a dead button with an empty
+  // default_url does nothing when clicked (#6). Pick a label that fits.
+  if (repoUrl) {
+    const label = asObj(p.organization).login ? "View Org" : "View Repo";
+    elements.push(linkButton(label, repoUrl, "default"));
+  }
 
   return {
     header: {

@@ -42,14 +42,25 @@ function buildEventMessage(
     full_name?: string;
     html_url?: string;
   };
+  // Org-scoped events (organization / member / team / ...) have NO top-level
+  // `repository`. Fall back to the `organization` object so downstream cards
+  // show the org name instead of "unknown/unknown" and links resolve.
+  // (See issue #6.)
+  const organization = (payload.organization ?? {}) as {
+    login?: string;
+    html_url?: string;
+    url?: string;
+  };
   const sender = (payload.sender ?? {}) as { login?: string; avatar_url?: string };
+  const fullName = repository.full_name ?? organization.login ?? "unknown/unknown";
+  const htmlUrl = repository.html_url ?? organization.html_url ?? organization.url ?? "";
   return {
     id,
     event: eventType,
     action: typeof payload.action === "string" ? payload.action : undefined,
     repository: {
-      full_name: repository.full_name ?? "unknown/unknown",
-      html_url: repository.html_url ?? "",
+      full_name: fullName,
+      html_url: htmlUrl,
     },
     actor: {
       login: sender.login ?? "unknown",

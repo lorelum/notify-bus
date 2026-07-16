@@ -341,6 +341,34 @@ describe("buildCard · fallback", () => {
     const card = buildCard(msg("deployment", {}, { formattedBody: "**custom body**" }));
     expect(elementMarkdown(card.elements)).toContain("custom body");
   });
+
+  it("surfaces membership.user + role for member events", () => {
+    const card = buildCard(msg("member", {
+      action: "added",
+      membership: { role: "member", user: { login: "newperson", html_url: "https://github.com/newperson" } },
+      organization: { login: "someorg" },
+    }, { action: "added" }));
+    const text = elementMarkdown(card.elements);
+    expect(text).toContain("newperson");
+    expect(text).toContain("`member`"); // role
+    expect(text).toContain("someorg");
+  });
+
+  it("does not emit a button when the repo/org url is empty", () => {
+    // Dead-button guard (#6): a button with an empty default_url does nothing.
+    // Build a message whose repository.html_url is "" to exercise the guard.
+    const emptyUrlMsg: EventMessage = {
+      id: "e",
+      event: "organization",
+      action: "member_added",
+      repository: { full_name: "someorg", html_url: "" },
+      actor: { login: "someone", avatar_url: "" },
+      payload: { action: "member_added", membership: { user: { login: "x" } }, organization: { login: "someorg" } },
+      metadata: {},
+    };
+    const card = buildCard(emptyUrlMsg);
+    expect(findButtonUrls(card.elements).length).toBe(0);
+  });
 });
 
 describe("buildCard · no whole-card link", () => {
