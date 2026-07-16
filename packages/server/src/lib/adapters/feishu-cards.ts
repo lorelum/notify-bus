@@ -479,12 +479,38 @@ function buildFallbackCard(message: EventMessage, body: string): FeishuCard {
   const p = message.payload;
   const repo = message.repository.full_name;
   const repoUrl = message.repository.html_url;
+  // Discriminate repo-scoped vs org-scoped by whether the RAW payload has a
+  // top-level `repository`. (Repo events on an org-owned repo ALSO carry an
+  // `organization` field, so checking `organization` is wrong — it mislabels
+  // repo events as "View Org". See #13.)
+  const hasRepository = p.repository !== undefined && p.repository !== null;
 
-  // Build a richer body than just "event · action": surface org/member
-  // details when present (covers organization / member / team events that
-  // otherwise render as bare event names).
+  // Build a richer body than just "event · action": surface comment content,
+  // the parent issue/PR title+number, and org/member details when present.
   const lines: string[] = [];
   lines.push(`**${md(message.event)}**${message.action ? ` · ${md(message.action)}` : ""}`);
+
+  // Comment-bearing events: issue_comment / commit_comment / discussion /
+  // discussion_comment all nest a `comment` (or `discussion`) with a body.
+  const comment = asObj(p.comment);
+  const commentBody = truncate(asStr(comment.body), 300);
+  const commentUrl = asStr(comment.html_url);
+  // The parent issue/PR for issue_comment.
+  const issue = asObj(p.issue);
+  const issueTitle = asStr(issue.title);
+  const issueNumber = asNum(issue.number);
+  const discussion = asObj(p.discussion);
+  const discussionTitle = asStr(discussion.title);
+
+  if (issueTitle) {
+    lines.push(`### ${md(issueTitle)}${issueNumber !== undefined ? ` #${issueNumber}` : ""}`);
+  } else if (discussionTitle) {
+    lines.push(`### ${md(discussionTitle)}`);
+  }
+  if (commentBody) {
+    lines.push(`> ${commentBody.replace(/\n/g, "\n> ")}`);
+  }
+
   // membership.user (member added/removed) + role.
   const membership = asObj(p.membership);
   const memberUser = asObj(membership.user);
@@ -497,7 +523,7 @@ function buildFallbackCard(message: EventMessage, body: string): FeishuCard {
     lines.push(`👤 **${md(message.actor.login)}**`);
   }
   const orgLogin = asStr(asObj(p.organization).login);
-  if (orgLogin && orgLogin !== repo) {
+  if (orgLogin && !hasRepository) {
     lines.push(`🏢 ${md(orgLogin)}`);
   }
   const content = body || lines.join("\n");
@@ -505,10 +531,16 @@ function buildFallbackCard(message: EventMessage, body: string): FeishuCard {
   const elements: CardElement[] = [markdown(content)];
   elements.push(note(`${repo} · notify-bus`));
   // Only emit a button when there's a real URL — a dead button with an empty
-  // default_url does nothing when clicked (#6). Pick a label that fits.
-  if (repoUrl) {
-    const label = asObj(p.organization).login ? "View Org" : "View Repo";
-    elements.push(linkButton(label, repoUrl, "default"));
+  // default_url does nothing when clicked (#6). Label reflects the target:
+  // a comment link if present, else the repo (repo events) / org (org events).
+  const buttonUrl = commentUrl || repoUrl;
+  if (buttonUrl) {
+    const label = commentUrl
+      ? "View Comment"
+      : hasRepository
+        ? "View Repo"
+        : "View Org";
+    elements.push(linkButton(label, buttonUrl, "default"));
   }
 
   return {
