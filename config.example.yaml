@@ -24,9 +24,17 @@ routes:
     match_repo: "*" # glob; '*' matches every repo
     # match_event: push,pull_request # omit / leave null to match all events
     # match_action: opened,closed    # omit to match all actions
+    # exclude_action: labeled,unlabeled,assigned,synchronize # blacklist; wins over match_action
     target_channel: team-feishu # resolved by name to a channel above
     priority: 100 # lower = higher priority; first match wins
     enabled: true
+  # Example: get issues but silence the noisy label/assign churn.
+  # - name: issues-without-label-churn
+  #   match_repo: "*"
+  #   match_event: issues
+  #   exclude_action: labeled,unlabeled,assigned
+  #   target_channel: team-feishu
+  #   priority: 50
 
 # Templates below are OPTIONAL. Each controls only the body markdown folded
 # into that event type's card. The card structure (colors, buttons, commits)

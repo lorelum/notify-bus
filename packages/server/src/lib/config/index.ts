@@ -28,7 +28,10 @@ export interface SeedRoute {
   name: string;
   match_repo?: string;
   match_event?: string;
+  /** Whitelist of actions (comma-separated). Omitted = all actions. */
   match_action?: string;
+  /** Blacklist of actions (comma-separated). Wins over match_action. */
+  exclude_action?: string;
   target_channel: string; // by name, resolved to a SeedChannel at match time
   priority?: number;
   enabled?: boolean;
@@ -114,6 +117,11 @@ export function matchRoute(config: SeedConfig, event: EventMessage): RouteMatch 
     if (!matchList(events, event.event)) continue;
     const actions = splitCsv(route.match_action);
     if (!matchList(actions, event.action)) continue;
+    // exclude_action wins over match_action: even if the action is included
+    // above, an explicit exclude drops it. Lets users say "issues, but not
+    // labeled/assigned" without enumerating every wanted action.
+    const excludes = splitCsv(route.exclude_action);
+    if (excludes && event.action && excludes.includes(event.action)) continue;
 
     const channel = channelByName.get(route.target_channel);
     // No such channel, or the channel is disabled -> this route can't fire.
