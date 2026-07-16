@@ -126,6 +126,32 @@ describe("matchRoute", () => {
   it("returns null when no routes are configured", () => {
     expect(matchRoute({ ...baseConfig }, event())).toBeNull();
   });
+
+  it("exclude_action drops a matching action even with no match_action whitelist", () => {
+    const config: SeedConfig = {
+      ...baseConfig,
+      routes: [
+        { name: "issues-no-label-churn", match_event: "issues", exclude_action: "labeled,unlabeled,assigned", target_channel: "feishu-a" },
+      ],
+    };
+    // opened -> matches (not excluded)
+    expect(matchRoute(config, event({ event: "issues", action: "opened" }))?.route.name).toBe("issues-no-label-churn");
+    // labeled -> excluded
+    expect(matchRoute(config, event({ event: "issues", action: "labeled" }))).toBeNull();
+    expect(matchRoute(config, event({ event: "issues", action: "assigned" }))).toBeNull();
+  });
+
+  it("exclude_action wins over match_action", () => {
+    const config: SeedConfig = {
+      ...baseConfig,
+      routes: [
+        { name: "pr", match_event: "pull_request", match_action: "opened,closed,synchronize", exclude_action: "synchronize", target_channel: "feishu-a" },
+      ],
+    };
+    expect(matchRoute(config, event({ event: "pull_request", action: "opened" }))?.route.name).toBe("pr");
+    // synchronize is whitelisted by match_action but excluded -> dropped.
+    expect(matchRoute(config, event({ event: "pull_request", action: "synchronize" }))).toBeNull();
+  });
 });
 
 describe("findTemplate", () => {
