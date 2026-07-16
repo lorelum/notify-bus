@@ -13,8 +13,12 @@ services:
     build: .
     image: notify-bus:latest
     restart: unless-stopped
+    # Bind to loopback only: the service has no auth and must NOT be reachable
+    # from the public network. Expose it via a reverse proxy (nginx/caddy)
+    # that terminates TLS and controls access. Override the host port with
+    # the PORT env var (e.g. PORT=47123 in .env).
     ports:
-      - "${PORT:-3000}:3000"
+      - "127.0.0.1:${PORT:-3000}:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
