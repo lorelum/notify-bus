@@ -52,6 +52,15 @@ ENV DATA_DIR=/app/data
 ENV CONFIG_PATH=/app/config.yaml
 ENV WEB_DIST_PATH=/app/web-dist
 
+# The oven/bun image already defines a non-root `bun` user (uid/gid 1000) with
+# this home directory. Running as it keeps the image's own default safe, and
+# pinning HOME gives the runtime a writable directory whatever the container
+# runtime defaults to. Orchestration that pins runAsUser/runAsGroup 1000 then
+# agrees with the image instead of overriding a root default. The server only
+# reads files at runtime, so nothing needs write access to /app.
+USER bun
+ENV HOME=/home/bun
+
 EXPOSE 3000
 
 # Bun runs TS natively — no build step for the server.
