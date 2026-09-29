@@ -1,54 +1,117 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
-    branches: [main]
+  push:
+    branches:
+      - main
+  workflow_dispatch:
 
-# Cancel in-flight runs for the same ref when a new commit is pushed.
+# `verify` needs no write permission; only a push to main gets package write
+# access and publishes an image.
+permissions:
+  contents: read
+
 concurrency:
-  group: ci-${{ github.ref }}
+  group: service-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   verify:
-    name: lint · typecheck · test · build
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
+    name: Verify
+    # Private repositories use the organization build pool automatically.
+    # Public repositories and fork PRs always stay GitHub-hosted.
+    runs-on: >-
+      ${{ fromJSON(
+        github.event.repository.private &&
+        !(github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name != github.repository) &&
+        '["lorelum-private-ci"]' ||
+        '["ubuntu-24.04"]'
+      ) }}
     steps:
-      - name: Checkout
+      - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Setup Bun
+      # The self-hosted build runner ships Bun; a GitHub-hosted runner does not.
+      # `make ci` itself only installs this project's own dependencies.
+      - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4
+          bun-version: "1.4"
 
-      # Single workspace install — installs both packages/server and packages/web.
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+      # `make ci` must install from the lockfile and run every check from a fresh
+      # checkout — see the Makefile.
+      - name: Run service checks
+        run: make ci
 
-      - name: Lint
-        run: bun run lint
+  image:
+    name: Build / publish GHCR image
+    needs: verify
+    runs-on: ${{ fromJSON(github.event.repository.private && '["lorelum-private-ci"]' || '["ubuntu-24.04"]') }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
 
-      - name: Format check
-        run: bun run fmt:check
+      - name: Resolve image repository
+        id: image
+        shell: bash
+        run: |
+          repository="ghcr.io/$(tr '[:upper:]' '[:lower:]' <<< "$GITHUB_REPOSITORY_OWNER")/notify-bus"
+          echo "repository=$repository" >> "$GITHUB_OUTPUT"
 
-      - name: Typecheck
-        run: bun run typecheck
-
-      - name: Test
-        run: bun test
-
-      - name: Build frontend
-        run: bun run build:web
-
-      - name: Upload frontend build
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
         with:
-          name: web-dist
-          path: packages/web/dist/
-          retention-days: 7
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create release tag
+        id: release
+        shell: bash
+        run: |
+          release_date="$(date -u +%Y%m%d)"
+          release_tag="${release_date}-${GITHUB_SHA:0:8}"
+          echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
+
+      # The docker-container driver supports GitHub Actions cache on both
+      # GitHub-hosted runners and the cluster's ARC Docker-in-Docker runner.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+
+      - name: Build image and publish from main
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          # PRs verify the Dockerfile without publishing. A main push publishes
+          # the date/commit release tag that GitOps then pins.
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: |
+            ${{ steps.image.outputs.repository }}:${{ steps.release.outputs.tag }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Publish immutable reference
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          {
+            echo '## Published image'
+            echo
+            echo 'Use this release tag in the GitOps release pull request:'
+            echo
+            echo "\`${{ steps.image.outputs.repository }}:${{ steps.release.outputs.tag }}\`"
+            echo
+            echo "Release tag: \`${{ steps.release.outputs.tag }}\` (date + 8-character commit). CI must never reuse a release tag for another commit."
+          } >> "$GITHUB_STEP_SUMMARY"
