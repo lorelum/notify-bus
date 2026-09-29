@@ -58,6 +58,18 @@ describe("seedChannelToConfig", () => {
       webhookUrl: channel.webhook_url,
     });
   });
+
+  it("carries the mention map, which the adapter needs to build an @ (#36)", () => {
+    // The translation is a whitelist: a field that is not carried here never
+    // reaches the adapter, so a mapping left out would silently drop every
+    // mention the channel was configured for.
+    const mention_map = { octocat: "REPLACE_ME_ID" };
+    expect(seedChannelToConfig({ ...channel, mention_map })).toEqual({
+      webhookUrl: channel.webhook_url,
+      mentionMap: mention_map,
+    });
+    expect(seedChannelToConfig(channel).mentionMap).toBeUndefined();
+  });
 });
 
 describe("dispatch", () => {

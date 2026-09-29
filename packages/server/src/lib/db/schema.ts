@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS channels (
   type         TEXT    NOT NULL,          -- 'feishu' | future: 'slack' | ...
   webhook_url  TEXT    NOT NULL,
   secret       TEXT,                       -- feishu signing secret, if set
+  mention_map  TEXT,                       -- JSON github-login -> feishu user id, NULL = no mentions
   enabled      INTEGER NOT NULL DEFAULT 1, -- bool as 0/1
   created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
 );
@@ -34,6 +35,7 @@ CREATE TABLE IF NOT EXISTS routes (
   exclude_event    TEXT,                    -- comma-sep blacklist, route-local
   exclude_action   TEXT,                    -- comma-sep blacklist, route-local
   match_payload    TEXT,                    -- JSON clause list (OR of AND-clauses), NULL = no condition
+  mention_only     INTEGER NOT NULL DEFAULT 0, -- bool as 0/1: deliver only mapped @-mentions
   target_channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
   priority         INTEGER NOT NULL DEFAULT 100,
   enabled          INTEGER NOT NULL DEFAULT 1,

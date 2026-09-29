@@ -1772,3 +1772,112 @@ describe("buildCard · dedicated card registry (#30)", () => {
     }
   });
 });
+
+/** A `pull_request` payload whose action a review-request test can vary. */
+function prPayload(action: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    action,
+    number: 7,
+    pull_request: {
+      title: "Add login",
+      html_url: "https://github.com/org/repo/pull/7",
+      user: { login: "alice" },
+      head: { ref: "feature/login" },
+      base: { ref: "main" },
+    },
+    ...extra,
+  };
+}
+
+describe("buildCard · pull_request review request (#36)", () => {
+  /** `Bob` is written in mixed case on purpose: the lookup ignores case. */
+  const MAP = { Bob: "ou_bob" };
+
+  it("names the reviewer the request is for", () => {
+    const text = cardText(
+      "pull_request",
+      prPayload("review_requested", { requested_reviewer: { login: "bob" } }),
+      "review_requested",
+    );
+    expect(text).toContain("👥 Review requested:");
+    expect(text).toContain("bob");
+  });
+
+  it("mentions a reviewer the channel maps, inside the same card", () => {
+    const card = prodCard(
+      "pull_request",
+      prPayload("review_requested", { requested_reviewer: { login: "bob" } }),
+      "review_requested",
+      { mentionMap: MAP },
+    );
+    expect(elementMarkdown(card.elements)).toContain("👥 Review requested: <at id=ou_bob></at>");
+    // Still one PR card — a review request never becomes a card of its own.
+    expect(card.header.title).toBe("🔀 PR #7");
+  });
+
+  it("names an unmapped reviewer without inventing a mention", () => {
+    const text = cardText(
+      "pull_request",
+      prPayload("review_requested", { requested_reviewer: { login: "stranger" } }),
+      "review_requested",
+    );
+    expect(text).toContain("👥 Review requested: **stranger**");
+    expect(text).not.toContain("<at");
+  });
+
+  it("keeps a requested team a name, and never expands it", () => {
+    const text = cardText(
+      "pull_request",
+      prPayload("review_requested", { requested_team: { name: "Platform", slug: "platform" } }),
+      "review_requested",
+    );
+    expect(text).toContain("👥 Review requested: team **Platform**");
+    expect(text).not.toContain("<at");
+    expect(text).not.toContain("@all");
+  });
+
+  it("does not announce a withdrawal as a request", () => {
+    // `review_request_removed` carries the same `requested_reviewer` field, so
+    // reading the field alone would announce a request that was taken back.
+    const text = cardText(
+      "pull_request",
+      prPayload("review_request_removed", { requested_reviewer: { login: "bob" } }),
+      "review_request_removed",
+    );
+    expect(text).not.toContain("Review requested:");
+  });
+
+  it("leaves every other action alone", () => {
+    const text = cardText(
+      "pull_request",
+      prPayload("opened", { requested_reviewer: { login: "bob" } }),
+      "opened",
+    );
+    expect(text).not.toContain("Review requested:");
+  });
+});
+
+describe("buildCard · mentions on the fallback (#36)", () => {
+  const reviewComment = {
+    action: "created",
+    comment: {
+      body: "nit: rename this",
+      html_url: "https://github.com/org/repo/pull/7#discussion_r1",
+    },
+    pull_request: { html_url: "https://github.com/org/repo/pull/7" },
+  };
+
+  it("renders the targets a mention-only route resolved", () => {
+    // `pull_request_review_comment` keeps its fallback card (#26); the mention
+    // is what the policy adds to it.
+    const card = prodCard("pull_request_review_comment", reviewComment, "created", {
+      mentions: { logins: ["bob"], userIds: ["ou_bob"] },
+    });
+    expect(elementMarkdown(card.elements)).toContain("<at id=ou_bob></at>");
+    expect(card.header.template).toBe("grey");
+  });
+
+  it("adds nothing when no targets were resolved", () => {
+    expect(cardText("pull_request_review_comment", reviewComment, "created")).not.toContain("<at");
+  });
+});

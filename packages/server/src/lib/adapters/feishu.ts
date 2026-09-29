@@ -16,6 +16,7 @@ import { createHmac } from "node:crypto";
 import type { ChannelAdapter, ChannelError, ChannelSendResult } from "./types";
 import type { EventMessage } from "../../types";
 import { buildCard } from "./feishu-cards";
+import type { CardContext } from "./feishu-cards";
 
 export const feishuCapabilities = {
   messageTypes: ["text", "post", "interactive"] as const,
@@ -39,11 +40,13 @@ export function signFeishu(timestamp: number, secret: string): string {
 interface FeishuConfig {
   webhookUrl?: string;
   secret?: string;
+  /** GitHub login → Feishu user id, forwarded from the channel's `mention_map`. */
+  mentionMap?: Readonly<Record<string, string>>;
 }
 
 function readConfig(config: Readonly<Record<string, unknown>>): FeishuConfig {
-  const { webhookUrl, secret } = config as Partial<FeishuConfig>;
-  return { webhookUrl, secret };
+  const { webhookUrl, secret, mentionMap } = config as Partial<FeishuConfig>;
+  return { webhookUrl, secret, mentionMap };
 }
 
 /** Feishu response codes that indicate signing/auth failure. */
@@ -73,10 +76,11 @@ function mapCode(code: number, msg: string): ChannelError {
  */
 function buildCardPayload(
   message: EventMessage,
+  context: CardContext,
   timestamp?: number,
   sign?: string,
 ): Record<string, unknown> {
-  const card = buildCard(message);
+  const card = buildCard(message, context);
   const header: Record<string, unknown> = {
     title: { tag: "plain_text", content: card.header.title },
     template: card.header.template,
@@ -115,7 +119,7 @@ export const feishuAdapter: ChannelAdapter = {
     message: EventMessage,
     config: Readonly<Record<string, unknown>>,
   ): Promise<ChannelSendResult> {
-    const { webhookUrl, secret } = readConfig(config);
+    const { webhookUrl, secret, mentionMap } = readConfig(config);
     if (!webhookUrl) {
       return {
         status: "fail",
@@ -130,7 +134,7 @@ export const feishuAdapter: ChannelAdapter = {
       sign = signFeishu(timestamp, secret);
     }
 
-    const payload = buildCardPayload(message, timestamp, sign);
+    const payload = buildCardPayload(message, { mentionMap }, timestamp, sign);
 
     let res: Response;
     try {

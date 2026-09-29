@@ -19,6 +19,7 @@
  * `feishu-card-kit.ts`. `buildCard` at the bottom dispatches across all of them.
  */
 import type { EventMessage } from "../../types";
+import { mappedUserId, normalizeMentionMap } from "../mentions";
 import { buildIssueCommentCard } from "./feishu-comment-card";
 import {
   buildDeploymentStatusCard,
@@ -31,11 +32,13 @@ import {
   asNum,
   asObj,
   asStr,
+  at,
   columnSet,
   hr,
   linkButton,
   markdown,
   md,
+  mentionLine,
   navigationButtons,
   shortSha,
   truncate,
@@ -46,6 +49,16 @@ import {
   type TagColor,
 } from "./feishu-card-kit";
 import { buildRepositoryCard } from "./feishu-repository-card";
+
+/**
+ * What a card builder needs beyond the event itself: the channel's mention map,
+ * for the one builder that resolves a person on its own (the review request,
+ * which no route filters on). Everything a *decision* resolved travels on the
+ * event's metadata instead.
+ */
+export interface CardContext {
+  mentionMap?: Readonly<Record<string, string>>;
+}
 
 // ─── text helpers ──────────────────────────────────────────────────────────
 
@@ -362,7 +375,40 @@ function prHeaderColor(action: string, merged: boolean): CardColor {
   return "purple";
 }
 
-function buildPullRequestCard(message: EventMessage, body: string): FeishuCard {
+/**
+ * The review-request line for a PR card, or `undefined` when this event is not
+ * one.
+ *
+ * A mapped reviewer becomes a real @; one that is not is still named in plain
+ * text, because the card must not pretend to have reached somebody it cannot. A
+ * requested team stays a name: its members are in neither the payload nor the
+ * map, and `@all` would ping a group for one review. Only `review_requested`
+ * produces this — `review_request_removed` carries the same `requested_reviewer`
+ * field, and reading it would announce a request that was just withdrawn.
+ */
+function reviewRequestLine(
+  action: string,
+  payload: Record<string, unknown>,
+  context: CardContext,
+): string | undefined {
+  if (action !== "review_requested") return undefined;
+  const parts: string[] = [];
+  const requestedUser = asStr(asObj(payload.requested_reviewer).login);
+  if (requestedUser) {
+    const userId = mappedUserId(normalizeMentionMap(context.mentionMap), requestedUser);
+    parts.push(userId === undefined ? `**${md(requestedUser)}**` : at(userId));
+  }
+  const requestedTeam =
+    asStr(asObj(payload.requested_team).name) ?? asStr(asObj(payload.requested_team).slug);
+  if (requestedTeam) parts.push(`team **${md(requestedTeam)}**`);
+  return parts.length > 0 ? `👥 Review requested: ${parts.join(" · ")}` : undefined;
+}
+
+function buildPullRequestCard(
+  message: EventMessage,
+  body: string,
+  context: CardContext = {},
+): FeishuCard {
   const p = message.payload;
   const repo = message.repository.full_name;
   const repoUrl = message.repository.html_url;
@@ -391,6 +437,11 @@ function buildPullRequestCard(message: EventMessage, body: string): FeishuCard {
   elements.push(markdown(`### ${md(title)}`));
   if (prBody) elements.push(markdown(`> ${md(prBody).replace(/\n/g, "\n> ")}`));
   if (body) elements.push(markdown(body));
+
+  // Who the request is for, in the same card — a review request used to show the
+  // action badge alone and name nobody.
+  const reviewRequest = reviewRequestLine(action, p, context);
+  if (reviewRequest) elements.push(markdown(reviewRequest));
 
   // Info row: author + branch flow | colored +/-/files stats.
   const leftLines = [`👤 **${md(user)}**`];
@@ -590,6 +641,10 @@ function buildFallbackCard(message: EventMessage, body: string): FeishuCard {
   // Build a richer body than just "event · action": surface comment content,
   // the parent discussion's title, and org/member details when present.
   const lines: string[] = [];
+  // The people a `mention_only` route targeted: generated markup from the route's
+  // own resolution, never a mention parsed out of the comment here.
+  const mentions = mentionLine(message);
+  if (mentions) lines.push(mentions);
   lines.push(`**${md(message.event)}**${message.action ? ` · ${md(message.action)}` : ""}`);
 
   // Comment-bearing events that still reach the fallback — commit_comment,
@@ -673,7 +728,11 @@ function buildFallbackCard(message: EventMessage, body: string): FeishuCard {
 }
 
 /** Builds one event's card — the signature every dedicated builder shares. */
-type CardBuilder = (message: EventMessage, body: string) => FeishuCard;
+/**
+ * Builds one event's card. The context is optional: only a builder that resolves
+ * a person itself reads it.
+ */
+type CardBuilder = (message: EventMessage, body: string, context?: CardContext) => FeishuCard;
 
 /**
  * Every event that ships a dedicated card, keyed by event name.
@@ -715,12 +774,14 @@ function isDedicatedEvent(event: string): event is DedicatedEvent {
 /**
  * Build a rich Feishu card for the given event, dispatching on event type.
  *
- * @param message  the rendered event. `formatted.body` carries the configured
- *                 template's markdown — possibly empty — and is folded in as
- *                 extra content.
+ * @param message  the rendered event. `formatted.body` is the template's
+ *                 markdown, possibly empty; a `mention_only` route's targets
+ *                 ride on `message.metadata`.
+ * @param context  the channel's mention map, for the builders that resolve a
+ *                 person themselves.
  */
-export function buildCard(message: EventMessage): FeishuCard {
+export function buildCard(message: EventMessage, context: CardContext = {}): FeishuCard {
   const body = message.formatted?.body ?? "";
   if (!isDedicatedEvent(message.event)) return buildFallbackCard(message, body);
-  return DEDICATED_CARDS[message.event](message, body);
+  return DEDICATED_CARDS[message.event](message, body, context);
 }

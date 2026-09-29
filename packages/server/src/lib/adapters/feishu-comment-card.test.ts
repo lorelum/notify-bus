@@ -142,3 +142,55 @@ describe("buildCard · issue_comment (#21)", () => {
     expect(text).toContain("Deploying now");
   });
 });
+
+describe("buildCard · issue_comment · mention-only targets (#36)", () => {
+  /** The comment a `mention_only` route would have looked at. */
+  const payload = {
+    action: "created",
+    issue: {
+      number: 42,
+      title: "Login broken",
+      html_url: "https://github.com/org/repo/issues/42",
+    },
+    comment: {
+      body: "@alice could you look at this?",
+      html_url: "https://github.com/org/repo/issues/42#issuecomment-1",
+      user: { login: "carol" },
+    },
+  };
+
+  it("renders the targets the route resolved, as real mentions", () => {
+    const card = prodCard("issue_comment", payload, "created", {
+      mentions: { logins: ["alice", "bob"], userIds: ["ou_alice", "ou_bob"] },
+    });
+    const text = elementMarkdown(card.elements);
+    expect(text).toContain("<at id=ou_alice></at> <at id=ou_bob></at>");
+    // The ordinary card is still there underneath: the mention is an addition,
+    // not a replacement.
+    expect(text).toContain("Login broken");
+    expect(text).toContain("@alice could you look at this?");
+  });
+
+  it("never turns the comment's own text into a mention", () => {
+    // `@alice` in the body is text: only the map produces markup, so a comment
+    // cannot mention anybody by being written that way.
+    const text = cardText("issue_comment", payload, "created");
+    expect(text).toContain("@alice could you look at this?");
+    expect(text).not.toContain("<at");
+  });
+
+  it("adds no line at all when the route resolved nobody", () => {
+    const text = cardText("issue_comment", payload, "created");
+    expect(text).not.toContain("<at id=");
+  });
+
+  it("refuses to render a whole-chat mention id", () => {
+    // Defence in depth: the loader rejects a map holding one of these, and no
+    // other path may ping a group either (#36).
+    expect(() =>
+      prodCard("issue_comment", payload, "created", {
+        mentions: { logins: ["all"], userIds: ["all"] },
+      }),
+    ).toThrow(/reserved Feishu id/);
+  });
+});

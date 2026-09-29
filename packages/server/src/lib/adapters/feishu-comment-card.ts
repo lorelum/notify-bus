@@ -15,6 +15,7 @@ import {
   hr,
   markdown,
   md,
+  mentionLine,
   navigationButtons,
   truncate,
   type CardColor,
@@ -80,6 +81,12 @@ export function buildIssueCommentCard(message: EventMessage, body: string): Feis
   const comment = resolveIssueComment(p);
 
   const elements: CardElement[] = [];
+
+  // The route's own targets, first: on a `mention_only` route they are why this
+  // card exists. Generated markup — the comment text below still goes through
+  // `md()`, so writing `@someone` cannot mention anybody by itself.
+  const mentions = mentionLine(message);
+  if (mentions) elements.push(markdown(mentions));
 
   // The comment is what happened; the issue it hangs off is the context that
   // makes it readable, so the title goes above the quoted text.

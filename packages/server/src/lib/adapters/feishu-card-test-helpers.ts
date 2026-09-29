@@ -123,13 +123,23 @@ export function elementMarkdown(elements: unknown[]): string {
  * assembly. Tests that read payload fields go through here: calling
  * `buildCard()` directly cannot see the template/composition layer, which is
  * where #16's bug lived and what #17 asked the tests to cover.
+ *
+ * `opts` passes the two inputs a card can depend on beyond its event (#36): the
+ * channel's mention map, and the targets a route already resolved, which
+ * production carries on `message.metadata` exactly as this does.
  */
 export function prodCard(
   event: string,
   payload: Record<string, unknown>,
   action?: string,
+  opts: {
+    mentionMap?: Record<string, string>;
+    mentions?: { logins: string[]; userIds: string[] };
+  } = {},
 ): ReturnType<typeof buildCard> {
-  return buildCard(renderFormatted(msg(event, payload, { action }), undefined));
+  const base = msg(event, payload, { action });
+  const message = opts.mentions ? { ...base, metadata: { mentions: opts.mentions } } : base;
+  return buildCard(renderFormatted(message, undefined), { mentionMap: opts.mentionMap });
 }
 
 /** All markdown text of a card built through the production path. */

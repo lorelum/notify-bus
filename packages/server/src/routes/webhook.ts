@@ -14,6 +14,7 @@ import { Elysia } from "elysia";
 import { verifyGitHubSignature } from "../lib/verify/github";
 import { resolveRoute, findTemplate } from "../lib/config";
 import type { SeedConfig } from "../lib/config";
+import { MENTIONS_METADATA_KEY } from "../lib/mentions";
 import { dispatch } from "../lib/dispatcher";
 import { renderFormatted } from "../lib/render";
 import type { AdapterRegistry } from "../lib/adapters/types";
@@ -146,6 +147,10 @@ export function buildWebhookRoute(deps: WebhookDeps) {
         };
       }
       const matched = decision.match;
+
+      // The route resolved these while deciding; the card renders the same result
+      // rather than reading the comment again.
+      if (matched.mentions) message.metadata[MENTIONS_METADATA_KEY] = matched.mentions;
 
       const template = findTemplate(deps.config, eventType)?.template;
       const rendered = renderFormatted(message, template);

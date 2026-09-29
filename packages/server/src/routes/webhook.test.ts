@@ -116,6 +116,24 @@ function targetsOf(payload: Record<string, unknown>): Array<string | undefined> 
   );
 }
 
+/** Every markdown `content` in a sent card, joined: the card's own text. */
+function markdownOf(payload: Record<string, unknown>): string {
+  const card = payload.card as { body: { elements: unknown } };
+  const texts: string[] = [];
+  const collect = (elements: Array<Record<string, unknown>>): void => {
+    for (const element of elements) {
+      if (element.tag === "markdown" && typeof element.content === "string") {
+        texts.push(element.content);
+      }
+      for (const column of elementsOf(element.columns)) {
+        collect(elementsOf(column.elements));
+      }
+    }
+  };
+  collect(elementsOf(card.body.elements));
+  return texts.join("\n");
+}
+
 async function postWebhook(
   app: { handle: (req: Request) => Promise<Response> },
   body: string,
@@ -498,5 +516,201 @@ describe("webhook route with a failures-only result policy (#35)", () => {
     expect(headerOf(payload).text_tag_list?.[0]?.text.content).toBe("failure");
     expect(labelsOf(payload)).toEqual(["View Environment", "View Repo"]);
     expect(targetsOf(payload)).toEqual(["https://prod.example", "https://gh/o/r"]);
+  });
+});
+
+describe("webhook route with a mention-only comment route (#36)", () => {
+  const mentionOnly: SeedConfig = {
+    channels: [
+      {
+        name: "team",
+        type: "feishu",
+        webhook_url: "https://feishu.example/hook",
+        enabled: true,
+        mention_map: {
+          alice: "ou_alice",
+          bob: "ou_bob",
+          carol: "ou_carol",
+          dave: "ou_dave",
+          erin: "ou_erin",
+          frank: "ou_frank",
+        },
+      },
+    ],
+    routes: [
+      {
+        name: "mention-only",
+        match_repo: "*",
+        match_event: "issue_comment",
+        mention_only: true,
+        target_channel: "team",
+      },
+    ],
+  };
+
+  const COMMENT_URL = "https://gh/o/r/issues/42#issuecomment-1";
+
+  const originalFetch = globalThis.fetch;
+  let sent: Array<Record<string, unknown>> = [];
+
+  beforeEach(() => {
+    sent = [];
+    globalThis.fetch = mock((_url: string, init: RequestInit) => {
+      sent.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+      return Promise.resolve(
+        new Response(JSON.stringify({ code: 0, data: { message_id: "om_1" } })),
+      );
+    }) as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  function app() {
+    return buildWebhookRoute({
+      config: mentionOnly,
+      adapters: new Map([["feishu", feishuAdapter]]),
+      secret: SECRET,
+    });
+  }
+
+  /** A comment body as GitHub sends it, written by a login the comment event names. */
+  function commentBody(body: string, author = "carol"): string {
+    return JSON.stringify({
+      action: "created",
+      repository: { full_name: "org/repo", html_url: "https://gh/o/r" },
+      sender: { login: author, avatar_url: "" },
+      issue: { number: 42, title: "Login broken", html_url: "https://gh/o/r/issues/42" },
+      comment: { body, html_url: COMMENT_URL, user: { login: author } },
+    });
+  }
+
+  async function post(body: string) {
+    const response = await postWebhook(app(), body, {
+      "x-github-event": "issue_comment",
+      "x-hub-signature-256": sign(body, SECRET),
+    });
+    return response.json as { status: string; reason?: string; route?: string };
+  }
+
+  it("sends one card mentioning every mapped person, once each", async () => {
+    const json = await post(commentBody("@alice could you look? @bob too — thanks @Alice"));
+    expect(json).toMatchObject({ status: "success", route: "mention-only" });
+    // One GitHub event, one card — never one card per person.
+    expect(sent).toHaveLength(1);
+    const card = markdownOf(sent[0]!);
+    expect(card).toContain("<at id=ou_alice></at> <at id=ou_bob></at>");
+    // `@Alice` was the same person as `@alice`, so there is no third mention.
+    expect(card.split("<at id=").length - 1).toBe(2);
+    expect(targetsOf(sent[0]!)).toEqual([COMMENT_URL, "https://gh/o/r"]);
+  });
+
+  it("caps the mentions in that one card", async () => {
+    const everyone = "@alice @bob @carol @dave @erin @frank";
+    const json = await post(commentBody(everyone));
+    expect(json).toMatchObject({ status: "success" });
+    expect(sent).toHaveLength(1);
+    const mentions = markdownOf(sent[0]!).split("<at id=").length - 1;
+    expect(mentions).toBe(5);
+  });
+
+  it("calls no channel for a comment that names nobody mapped", async () => {
+    const json = await post(commentBody("anyone around? cc @stranger"));
+    expect(json).toMatchObject({
+      status: "ignored",
+      route: "mention-only",
+      reason: "mention_only",
+    });
+    expect(sent).toHaveLength(0);
+  });
+
+  it("calls no channel for a comment from an author the channel does not map", async () => {
+    const json = await post(commentBody("@alice please review", "stranger"));
+    expect(json).toMatchObject({ status: "ignored", reason: "mention_only" });
+    expect(sent).toHaveLength(0);
+  });
+});
+
+describe("webhook route with a review request (#36)", () => {
+  const reviewRequests: SeedConfig = {
+    channels: [
+      {
+        name: "team",
+        type: "feishu",
+        webhook_url: "https://feishu.example/hook",
+        enabled: true,
+        mention_map: { Octocat: "ou_octocat" },
+      },
+    ],
+    routes: [
+      {
+        name: "pull-requests",
+        match_repo: "*",
+        match_event: "pull_request",
+        target_channel: "team",
+      },
+    ],
+  };
+
+  const originalFetch = globalThis.fetch;
+  let sent: Array<Record<string, unknown>> = [];
+
+  beforeEach(() => {
+    sent = [];
+    globalThis.fetch = mock((_url: string, init: RequestInit) => {
+      sent.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+      return Promise.resolve(
+        new Response(JSON.stringify({ code: 0, data: { message_id: "om_1" } })),
+      );
+    }) as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  /** A review request: the whole chain from YAML to the card, in one payload. */
+  async function post(reviewer: string) {
+    const body = JSON.stringify({
+      action: "review_requested",
+      number: 7,
+      repository: { full_name: "org/repo", html_url: "https://gh/o/r" },
+      sender: { login: "alice", avatar_url: "" },
+      pull_request: {
+        title: "Add login",
+        html_url: "https://gh/o/r/pull/7",
+        head: { ref: "feature/login" },
+        base: { ref: "main" },
+      },
+      requested_reviewer: { login: reviewer },
+    });
+    const response = await postWebhook(
+      buildWebhookRoute({
+        config: reviewRequests,
+        adapters: new Map([["feishu", feishuAdapter]]),
+        secret: SECRET,
+      }),
+      body,
+      { "x-github-event": "pull_request", "x-hub-signature-256": sign(body, SECRET) },
+    );
+    return response.json as { status: string; route?: string };
+  }
+
+  it("mentions the reviewer the channel maps, inside the PR card", async () => {
+    // The map travels YAML → seedChannelToConfig → adapter → buildCard; a rename
+    // anywhere on that path would show up here as a plain name instead of an @.
+    expect(await post("octocat")).toMatchObject({ status: "success", route: "pull-requests" });
+    expect(sent).toHaveLength(1);
+    expect(markdownOf(sent[0]!)).toContain("👥 Review requested: <at id=ou_octocat></at>");
+    // One PR card, with its own target — the request adds a line, not a card.
+    expect(targetsOf(sent[0]!)).toContain("https://gh/o/r/pull/7");
+  });
+
+  it("names a reviewer the channel does not map, without a mention", async () => {
+    expect(await post("stranger")).toMatchObject({ status: "success" });
+    const card = markdownOf(sent[0]!);
+    expect(card).toContain("👥 Review requested: **stranger**");
+    expect(card).not.toContain("<at");
   });
 });

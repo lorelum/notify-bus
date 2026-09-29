@@ -28,6 +28,18 @@ channels:
     type: feishu
     webhook_url: https://open.feishu.cn/open-apis/bot/v2/hook/REPLACE_ME
     secret: "" # optional: feishu signing secret, if enabled on the bot
+    # Who this channel may @: a GitHub login (case-insensitive) → Feishu
+    # `user_id`, the id type verified against a real group. A real @ needs all
+    # four, and nothing is sent until they all hold:
+    #   1. GitHub is sending that event (subscribe it on the repository);
+    #   2. a route here names it and its conditions hold;
+    #   3. this map holds the login that was named;
+    #   4. the event names that login — a comment's text, or a review request.
+    # Login text in a payload never becomes a mention on its own, the map is per
+    # channel (deleting a line is how you stop mentioning somebody), and a value
+    # has to be a person: `all` / `here` address the whole chat and are rejected.
+    # mention_map:
+    #   octocat: "REPLACE_WITH_FEISHU_USER_ID"
     enabled: true
 
 routes:
@@ -121,6 +133,11 @@ routes:
   # is a different event from `pull_request_review` (a review was submitted):
   # the first arrives here, the second only if you name it in a route.
   #
+  # A review request now names the reviewer in the card, and @s them when this
+  # channel's `mention_map` holds them; one it does not hold is named in plain
+  # text instead. A requested team stays a team name — its members are not in the
+  # payload and are never guessed at, and `@all` is not used.
+  #
   # Overlap with the push route is expected: merging a pull request also pushes
   # to its base branch, and pushing to a pull request's branch re-sends
   # `pull_request` (`synchronize`) alongside `push`. Add `synchronize` to
@@ -154,6 +171,40 @@ routes:
   # - name: pr-conversation
   #   match_repo: "*"
   #   match_event: issue_comment
+  #   target_channel: team-feishu
+  #   priority: 50
+
+  # Example: only the comments that address somebody this channel maps.
+  # `issue_comment` stays opt-in, and `mention_only` narrows it further: the
+  # comment has to name a mapped login in its plain text — fenced and inline code
+  # excluded, and e-mail addresses, `@all`, `@org/team`, `@alice_smith` and a
+  # mention inside a URL never counted — and its author has to be mapped too, so
+  # a stranger cannot @ a teammate. At most 5 people, once per person (two logins
+  # mapped to one Feishu id are one person), in the order they were named, all in
+  # the one card.
+  #
+  # Only a comment's first posting is read: editing one to add an @ does not
+  # notify, and a deleted comment notifies nobody — `match_action: created` says
+  # so here, and the route enforces it either way. "Code" is this project's own
+  # reading of Markdown, not a full parser: fenced blocks anywhere (including
+  # quoted in a reply or inside a list item), inline code and HTML `<code>` /
+  # `<pre>` never mention anybody, but a four-space-indented block is not
+  # recognized as code.
+  # - name: mention-only-comments
+  #   match_repo: "*"
+  #   match_event: issue_comment
+  #   match_action: created
+  #   mention_only: true
+  #   target_channel: team-feishu
+  #   priority: 50
+
+  # The same policy covers a pull request's line-by-line review comments — the
+  # ones on the Files changed tab — which keep the plain card they have today:
+  # - name: mention-only-review-comments
+  #   match_repo: "*"
+  #   match_event: pull_request_review_comment
+  #   match_action: created
+  #   mention_only: true
   #   target_channel: team-feishu
   #   priority: 50
 
@@ -201,8 +252,8 @@ templates:
   # of those fields makes it appear TWICE in the card. Add content the card does
   # not already show instead (#16).
   #
-  # Example: the PR card shows the title and a truncated body, but not who has
-  # been asked to review, so this adds only that line.
+  # Example: the PR card shows the title, a truncated body, and who was asked to
+  # review, but not its milestone or assignees, so this adds only that line.
   # - event_type: pull_request
   #   template: |
-  #     {{#if payload.pull_request.requested_reviewers}}👥 Review requested: {{#each payload.pull_request.requested_reviewers}}{{login}} {{/each}}{{/if}}
+  #     {{#if payload.pull_request.milestone}}🎯 Milestone: {{payload.pull_request.milestone.title}}{{/if}}
