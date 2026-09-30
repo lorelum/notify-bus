@@ -53,11 +53,12 @@ import { buildRepositoryCard } from "./feishu-repository-card";
 /**
  * What a card builder needs beyond the event itself: the channel's mention map,
  * for the one builder that resolves a person on its own (the review request,
- * which no route filters on). Everything a *decision* resolved travels on the
- * event's metadata instead.
+ * which no route filters on), and the optional push comparison result.
+ * Everything a *decision* resolved travels on the event's metadata instead.
  */
 export interface CardContext {
   mentionMap?: Readonly<Record<string, string>>;
+  pushLineStats?: Readonly<{ additions: number; deletions: number }>;
 }
 
 // ─── text helpers ──────────────────────────────────────────────────────────
@@ -248,7 +249,7 @@ function resolvePrimaryLink(payload: Record<string, unknown>, repoUrl: string): 
  */
 const MAX_PUSH_COMMITS = 2048;
 
-function buildPushCard(message: EventMessage, body: string): FeishuCard {
+function buildPushCard(message: EventMessage, body: string, context: CardContext = {}): FeishuCard {
   const p = message.payload;
   const repo = message.repository.full_name;
   const repoUrl = message.repository.html_url;
@@ -283,10 +284,18 @@ function buildPushCard(message: EventMessage, body: string): FeishuCard {
   const elements: CardElement[] = [];
 
   const leftCol = markdown(`👤 **${md(pusher)}**${branch ? `\n🔀 \`${md(branch)}\`` : ""}`);
+  const stats = context.pushLineStats;
+  const rightLines = [];
+  if (stats) {
+    rightLines.push(
+      `📊 ${colored("green", `+${stats.additions}`)} ${colored("red", `-${stats.deletions}`)} lines`,
+    );
+  }
   // A deleted branch has no commit count to report, so the author goes
   // full-width rather than sharing the row with an empty or misleading column.
   if (!deleted) {
-    elements.push(columnSet([[leftCol], [markdown(`📦 ${totalLabel}`)]]));
+    rightLines.push(`📦 ${totalLabel}`);
+    elements.push(columnSet([[leftCol], [markdown(rightLines.join("\n"))]]));
   } else {
     elements.push(leftCol);
   }
@@ -763,8 +772,7 @@ function isDedicatedEvent(event: string): event is DedicatedEvent {
  * @param message  the rendered event. `formatted.body` is the template's
  *                 markdown, possibly empty; a `mention_only` route's targets
  *                 ride on `message.metadata`.
- * @param context  the channel's mention map, for the builders that resolve a
- *                 person themselves.
+ * @param context  the channel's mention map and optional push line statistics.
  */
 export function buildCard(message: EventMessage, context: CardContext = {}): FeishuCard {
   const body = message.formatted?.body ?? "";

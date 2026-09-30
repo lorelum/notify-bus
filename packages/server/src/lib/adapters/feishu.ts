@@ -49,6 +49,90 @@ function readConfig(config: Readonly<Record<string, unknown>>): FeishuConfig {
   return { webhookUrl, secret, mentionMap };
 }
 
+/** The push webhook lists changed *files*, not changed lines. Compare the two
+ * revision SHAs instead; never display a partial result as an exact total. */
+async function fetchPushLineStats(message: EventMessage): Promise<CardContext["pushLineStats"]> {
+  const token = process.env.GITHUB_API_TOKEN;
+  const p = message.payload;
+  if (
+    !token ||
+    message.event !== "push" ||
+    p.created === true ||
+    p.deleted === true ||
+    p.forced === true
+  ) {
+    return undefined;
+  }
+
+  const before = p.before;
+  const after = p.after;
+  const repo = message.repository.full_name;
+  if (
+    typeof before !== "string" ||
+    typeof after !== "string" ||
+    !/^[0-9a-f]{40}$/i.test(before) ||
+    !/^[0-9a-f]{40}$/i.test(after) ||
+    /^0{40}$/.test(before) ||
+    !/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i.test(repo)
+  ) {
+    return undefined;
+  }
+
+  const repoPath = repo.split("/").map(encodeURIComponent).join("/");
+  const url = `https://api.github.com/repos/${repoPath}/compare/${before}...${after}`;
+  try {
+    const response = await fetch(url, {
+      headers: {
+        accept: "application/vnd.github+json",
+        authorization: `Bearer ${token}`,
+        "x-github-api-version": "2022-11-28",
+      },
+      signal: AbortSignal.timeout(3000),
+      redirect: "error",
+    });
+    if (!response.ok) {
+      process.stderr.write(
+        `[notify-bus] push line stats unavailable (GitHub HTTP ${response.status})\n`,
+      );
+      return undefined;
+    }
+
+    const data = (await response.json()) as Record<string, unknown>;
+    // The Compare API returns at most 300 files for the entire comparison.
+    // A response with exactly 300 may be truncated; never sum it as a total.
+    const files = data.files;
+    if (!Array.isArray(files) || files.length >= 300) {
+      process.stderr.write("[notify-bus] push line stats unavailable (incomplete comparison)\n");
+      return undefined;
+    }
+    let additions = 0;
+    let deletions = 0;
+    for (const file of files) {
+      const { additions: added, deletions: removed } = (file ?? {}) as Record<string, unknown>;
+      if (
+        typeof added !== "number" ||
+        !Number.isSafeInteger(added) ||
+        added < 0 ||
+        typeof removed !== "number" ||
+        !Number.isSafeInteger(removed) ||
+        removed < 0
+      ) {
+        process.stderr.write("[notify-bus] push line stats unavailable (invalid comparison)\n");
+        return undefined;
+      }
+      additions += added;
+      deletions += removed;
+    }
+    if (!Number.isSafeInteger(additions) || !Number.isSafeInteger(deletions)) return undefined;
+    return { additions, deletions };
+  } catch {
+    // Network/JSON/timeout failures must not prevent the original notification.
+    // Do not log the request headers or token.
+    process.stderr.write("[notify-bus] push line stats unavailable (GitHub request failed)\n");
+    return undefined;
+  }
+}
+
 /** Feishu response codes that indicate signing/auth failure. */
 const AUTH_CODES = new Set([9499, 9499.1]);
 
@@ -134,7 +218,8 @@ export const feishuAdapter: ChannelAdapter = {
       sign = signFeishu(timestamp, secret);
     }
 
-    const payload = buildCardPayload(message, { mentionMap }, timestamp, sign);
+    const pushLineStats = await fetchPushLineStats(message);
+    const payload = buildCardPayload(message, { mentionMap, pushLineStats }, timestamp, sign);
 
     let res: Response;
     try {

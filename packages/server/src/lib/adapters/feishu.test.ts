@@ -202,3 +202,129 @@ describe("feishuAdapter.send", () => {
     expect(posted.card.header.subtitle?.tag).toBe("plain_text");
   });
 });
+
+describe("feishuAdapter.send · push line stats", () => {
+  const originalFetch = globalThis.fetch;
+  const originalToken = process.env.GITHUB_API_TOKEN;
+  const before = "a".repeat(40);
+  const after = "b".repeat(40);
+  let calls: { url: string; init?: RequestInit }[];
+  let posted: string[];
+  let apiReply: Response | Error;
+
+  const push = (payload: Record<string, unknown> = {}): EventMessage => ({
+    ...buildMessage(""),
+    payload: { before, after, commits: [{ id: after, message: "fix" }], ...payload },
+  });
+
+  beforeEach(() => {
+    process.env.GITHUB_API_TOKEN = "read-only-test-token";
+    calls = [];
+    posted = [];
+    apiReply = mockFetchResponse({
+      files: [
+        { additions: 8, deletions: 0 },
+        { additions: 158, deletions: 6 },
+      ],
+    });
+    globalThis.fetch = mock(async (input: string | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init });
+      if (String(input).startsWith("https://api.github.com/")) {
+        if (apiReply instanceof Error) return Promise.reject(apiReply);
+        return apiReply;
+      }
+      posted.push(String(init?.body ?? ""));
+      return mockFetchResponse({ code: 0, msg: "success" });
+    }) as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    if (originalToken === undefined) delete process.env.GITHUB_API_TOKEN;
+    else process.env.GITHUB_API_TOKEN = originalToken;
+  });
+
+  it("uses the full before-to-after comparison for net added/deleted lines", async () => {
+    const message = push({
+      commits: [
+        { id: "c".repeat(40), message: "docs" },
+        { id: after, message: "fix" },
+      ],
+      head_commit: { added: [], modified: ["only-last.ts"], removed: [] },
+    });
+    expect(await feishuAdapter.send(message, { webhookUrl: WEBHOOK_URL })).toEqual({
+      status: "success",
+    });
+    expect(calls.map((call) => call.url)).toEqual([
+      `https://api.github.com/repos/org/repo/compare/${before}...${after}`,
+      WEBHOOK_URL,
+    ]);
+    expect(calls[0]?.init?.headers).toMatchObject({ authorization: "Bearer read-only-test-token" });
+    expect(calls[0]?.init?.signal).toBeDefined();
+    const card = posted[0]!;
+    expect(card).toContain("+166");
+    expect(card).toContain("-6");
+    expect(card).toContain("lines");
+    expect(card).toContain("2 commits");
+    expect(card).not.toContain("read-only-test-token");
+  });
+
+  it("sends without guessed numbers when no token is configured", async () => {
+    delete process.env.GITHUB_API_TOKEN;
+    expect(await feishuAdapter.send(push(), { webhookUrl: WEBHOOK_URL })).toEqual({
+      status: "success",
+    });
+    expect(calls.map((call) => call.url)).toEqual([WEBHOOK_URL]);
+    expect(posted[0]).not.toContain("lines");
+  });
+
+  it("does not block a notification or report file counts as lines on API failure", async () => {
+    apiReply = mockFetchResponse({ message: "Forbidden" }, false, 403);
+    expect(await feishuAdapter.send(push(), { webhookUrl: WEBHOOK_URL })).toEqual({
+      status: "success",
+    });
+    expect(calls).toHaveLength(2);
+    expect(posted[0]).not.toContain("lines");
+  });
+
+  it("still sends the original card if the compare request times out", async () => {
+    apiReply = new DOMException("timed out", "AbortError");
+    expect(await feishuAdapter.send(push(), { webhookUrl: WEBHOOK_URL })).toEqual({
+      status: "success",
+    });
+    expect(calls).toHaveLength(2);
+    expect(posted[0]).not.toContain("lines");
+  });
+
+  it("omits totals that may be truncated or have missing per-file counts", async () => {
+    apiReply = mockFetchResponse({
+      files: Array.from({ length: 300 }, () => ({ additions: 1, deletions: 0 })),
+    });
+    await feishuAdapter.send(push(), { webhookUrl: WEBHOOK_URL });
+    expect(posted[0]).not.toContain("lines");
+
+    apiReply = mockFetchResponse({ files: [{ additions: 10 }] });
+    await feishuAdapter.send(push(), { webhookUrl: WEBHOOK_URL });
+    expect(posted[1]).not.toContain("lines");
+  });
+
+  it("skips invalid comparisons, branch creation/deletion and force pushes", async () => {
+    const payloads = [
+      { before: "0".repeat(40), created: true },
+      { deleted: true },
+      { forced: true },
+      { after: "bad-sha" },
+    ];
+    const results = await Promise.all(
+      payloads.map((payload) => feishuAdapter.send(push(payload), { webhookUrl: WEBHOOK_URL })),
+    );
+    expect(results).toEqual(payloads.map(() => ({ status: "success" })));
+    expect(calls.map((call) => call.url)).toEqual(Array(4).fill(WEBHOOK_URL));
+  });
+
+  it("never queries GitHub for other event types", async () => {
+    const message = { ...push(), event: "issues" };
+    await feishuAdapter.send(message, { webhookUrl: WEBHOOK_URL });
+    expect(calls.map((call) => call.url)).toEqual([WEBHOOK_URL]);
+  });
+});

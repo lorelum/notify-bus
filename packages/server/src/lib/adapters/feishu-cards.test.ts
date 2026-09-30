@@ -127,6 +127,21 @@ describe("buildCard · push", () => {
     expect(text).not.toContain('<font color="orange">~2</font>');
   });
 
+  it("shows actual added/deleted lines when the compare result is available", () => {
+    const enriched = buildCard(
+      msg(
+        "push",
+        { ref: "refs/heads/main", commits: [{ id: "0123456789", message: "fix" }] },
+        { ref: "refs/heads/main" },
+      ),
+      { pushLineStats: { additions: 166, deletions: 6 } },
+    );
+    const text = elementMarkdown(enriched.elements);
+    expect(text).toContain('<font color="green">+166</font>');
+    expect(text).toContain('<font color="red">-6</font> lines');
+    expect(text).not.toContain("~");
+  });
+
   it("includes the compare button", () => {
     expect(findButtonUrls(card.elements)).toContain(
       "https://github.com/org/repo/compare/abc...def",
