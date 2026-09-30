@@ -120,11 +120,11 @@ describe("buildCard · push", () => {
     expect(text).toContain('<text_tag color="neutral">Alice');
   });
 
-  it("shows colored file stats (+green / ~orange / -red)", () => {
+  it("does not present head-commit file counts as push change statistics", () => {
     const text = elementMarkdown(card.elements);
-    expect(text).toContain('<font color="green">+1</font>');
-    expect(text).toContain('<font color="orange">~2</font>');
-    expect(text).toContain('<font color="red">-1</font>');
+    expect(text).toContain("📦 2 commits");
+    expect(text).not.toContain("📁");
+    expect(text).not.toContain('<font color="orange">~2</font>');
   });
 
   it("includes the compare button", () => {

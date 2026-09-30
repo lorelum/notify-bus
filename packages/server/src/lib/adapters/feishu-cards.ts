@@ -280,27 +280,13 @@ function buildPushCard(message: EventMessage, body: string): FeishuCard {
   const deleted = p.deleted === true;
   const created = p.created === true;
 
-  const head = asObj(p.head_commit);
-  const added = asArr(head.added).length;
-  const modified = asArr(head.modified).length;
-  const removed = asArr(head.removed).length;
-  const changed = added + modified + removed;
-
   const elements: CardElement[] = [];
 
-  // Info row: author + branch | file-change stats (colored).
   const leftCol = markdown(`👤 **${md(pusher)}**${branch ? `\n🔀 \`${md(branch)}\`` : ""}`);
-  const rightParts: string[] = [];
-  if (changed > 0) {
-    rightParts.push(
-      `📁 ${colored("green", `+${added}`)} ${colored("orange", `~${modified}`)} ${colored("red", `-${removed}`)}`,
-    );
-  }
   // A deleted branch has no commit count to report, so the author goes
   // full-width rather than sharing the row with an empty or misleading column.
-  if (!deleted) rightParts.push(`📦 ${totalLabel}`);
-  if (rightParts.length > 0) {
-    elements.push(columnSet([[leftCol], [markdown(rightParts.join("\n"))]]));
+  if (!deleted) {
+    elements.push(columnSet([[leftCol], [markdown(`📦 ${totalLabel}`)]]));
   } else {
     elements.push(leftCol);
   }
