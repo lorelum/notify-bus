@@ -16,6 +16,20 @@
 # All fields are optional: no config.yaml at all is valid — nothing matches
 # until you add a route.
 #
+# Values may come from the environment instead of this file: `${NAME}` in a
+# string value is replaced from the environment after this file is parsed, so a
+# deployment can keep the policy here (and this file in Git / a ConfigMap) while
+# the credentials stay in the environment the platform injects:
+#
+#   webhook_url: ${FEISHU_BOT_WEBHOOK_URL}
+#   secret: ${FEISHU_BOT_SECRET}
+#
+# A variable that is unset or empty fails the load, naming the variable and the
+# field — a forgotten value is a deployment error, not an empty credential
+# discovered at delivery time. Write `$$` for a literal `$`; a placeholder's
+# value is never re-expanded. Placeholders work in values only — not in keys or
+# in this file's structure — and comments, like this one, are never expanded (#41).
+#
 # NOTE on templates: the Feishu adapter builds a rich card per event type
 # (header color, buttons, stat tiles) in code, and the card already renders the
 # payload's own title and body. A template here only *adds* body markdown on

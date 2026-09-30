@@ -97,6 +97,7 @@ Then point a GitHub webhook at `https://your-host/webhook`, add a Feishu custom-
 Configuration comes from `config.yaml` today:
 
 - **YAML** (`config.yaml`) — the only config source. Routes, channels and templates are read from it at startup, so an edit needs a restart; there is no hot reload yet.
+- **Environment** — `${NAME}` inside that file's values is expanded from the environment after parsing, so a deployment can keep the routing policy in a reviewed file while credentials stay in the environment it injects (#41).
 - **SQLite** (`data.db`) — _(M3)_ where routes, channels, templates and logs will live, edited through the admin UI / REST API, with the store winning over the YAML seed.
 
 ## Roadmap

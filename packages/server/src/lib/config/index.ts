@@ -203,27 +203,99 @@ function assertMentionOnly(route: SeedRoute, channels: ReadonlyMap<string, SeedC
   }
 }
 
+/** A `${NAME}` placeholder, or the `$$` escape for a literal `$`. */
+const ENV_PLACEHOLDER = /\$\$|\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+
+/**
+ * Expand the placeholders in one string value (#41).
+ *
+ * A variable that is unset **or empty** fails the load, naming the variable and
+ * where it was referenced. An empty credential would otherwise look fine until
+ * a delivery failed, which is the failure this check moves forward to startup —
+ * the same stance as the `mention_map` / `match_payload` assertions below.
+ *
+ * Substitution is a single pass: a value that itself contains `${…}` is
+ * inserted literally and never re-expanded. `$$` writes a literal `$`.
+ */
+function expandEnvPlaceholders(
+  text: string,
+  env: Readonly<Record<string, string | undefined>>,
+  where: string,
+): string {
+  return text.replace(ENV_PLACEHOLDER, (match: string, name?: string) => {
+    if (name === undefined) return "$";
+    const value = env[name];
+    if (value === undefined) {
+      throw new Error(`${where} references ${match}, which is not set in the environment`);
+    }
+    if (value === "") {
+      throw new Error(`${where} references ${match}, which is set but empty`);
+    }
+    return value;
+  });
+}
+
+/**
+ * Walk the parsed config and expand `${NAME}` in every string value.
+ *
+ * Expansion happens *after* parsing, not on the file text, for two reasons: a
+ * commented-out line that shows the syntax must not be expanded (the shipped
+ * `config.example.yaml` documents the feature exactly that way), and an
+ * injected value can never change the document's structure — a secret holding
+ * quotes, a colon or a newline stays a plain string. The cost is that a
+ * placeholder only works in a *value*; it cannot parameterize a key or a shape.
+ */
+function expandEnvInConfig(
+  node: unknown,
+  env: Readonly<Record<string, string | undefined>>,
+  where: string,
+): unknown {
+  if (typeof node === "string") return expandEnvPlaceholders(node, env, where);
+  if (Array.isArray(node)) {
+    return node.map((item, index) => expandEnvInConfig(item, env, `${where}[${index}]`));
+  }
+  if (node !== null && typeof node === "object") {
+    const expanded: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(node)) {
+      expanded[key] = expandEnvInConfig(value, env, `${where}.${key}`);
+    }
+    return expanded;
+  }
+  return node;
+}
+
 /**
  * Load the YAML seed config from disk.
  *
  * Returns null if the file is absent (running with no seed is valid — the
  * webhook will just never match a route). Throws on a malformed file, on a
- * route whose `match_payload` cannot be read as conditions, and on a channel or
- * route whose mention configuration could only fail later: a broken config is a
+ * route whose `match_payload` cannot be read as conditions, on a channel or
+ * route whose mention configuration could only fail later, and on a `${NAME}`
+ * placeholder whose variable is unset or empty: a broken config is a
  * deployment error, not a silent-default situation.
+ *
+ * This is what lets a deployment keep the routing policy in a reviewed file
+ * while the credentials stay in the environment: the file says which variable
+ * holds each value, and the platform injects it (#41).
+ *
+ * @param env the environment `${NAME}` placeholders read from (tests pass a
+ *            stub; the server passes `process.env`)
  */
-export function loadSeedConfig(path: string): SeedConfig | null {
+export function loadSeedConfig(
+  path: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): SeedConfig | null {
   if (!existsSync(path)) return null;
-  const text = readFileSync(path, "utf8");
-  const parsed = parseYaml(text) as SeedConfig | null;
+  const parsed = parseYaml(readFileSync(path, "utf8")) as SeedConfig | null;
   if (parsed === null || parsed === undefined) return null;
-  for (const channel of parsed.channels ?? []) assertMentionMap(channel);
-  const channelByName = new Map((parsed.channels ?? []).map((channel) => [channel.name, channel]));
-  for (const route of parsed.routes ?? []) {
+  const config = expandEnvInConfig(parsed, env, "config") as SeedConfig;
+  for (const channel of config.channels ?? []) assertMentionMap(channel);
+  const channelByName = new Map((config.channels ?? []).map((channel) => [channel.name, channel]));
+  for (const route of config.routes ?? []) {
     assertMatchPayload(route);
     assertMentionOnly(route, channelByName);
   }
-  return parsed;
+  return config;
 }
 
 /** Split a comma-separated match field into a trimmed list. Empty -> undefined. */
