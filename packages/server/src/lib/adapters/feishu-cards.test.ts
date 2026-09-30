@@ -120,11 +120,26 @@ describe("buildCard · push", () => {
     expect(text).toContain('<text_tag color="neutral">Alice');
   });
 
-  it("shows colored file stats (+green / ~orange / -red)", () => {
+  it("does not present head-commit file counts as push change statistics", () => {
     const text = elementMarkdown(card.elements);
-    expect(text).toContain('<font color="green">+1</font>');
-    expect(text).toContain('<font color="orange">~2</font>');
-    expect(text).toContain('<font color="red">-1</font>');
+    expect(text).toContain("📦 2 commits");
+    expect(text).not.toContain("📁");
+    expect(text).not.toContain('<font color="orange">~2</font>');
+  });
+
+  it("shows actual added/deleted lines when the compare result is available", () => {
+    const enriched = buildCard(
+      msg(
+        "push",
+        { ref: "refs/heads/main", commits: [{ id: "0123456789", message: "fix" }] },
+        { ref: "refs/heads/main" },
+      ),
+      { pushLineStats: { additions: 166, deletions: 6 } },
+    );
+    const text = elementMarkdown(enriched.elements);
+    expect(text).toContain('<font color="green">+166</font>');
+    expect(text).toContain('<font color="red">-6</font> lines');
+    expect(text).not.toContain("~");
   });
 
   it("includes the compare button", () => {

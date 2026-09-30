@@ -100,6 +100,15 @@ Configuration comes from `config.yaml` today:
 - **Environment** — `${NAME}` inside that file's values is expanded from the environment after parsing, so a deployment can keep the routing policy in a reviewed file while credentials stay in the environment it injects (#41).
 - **SQLite** (`data.db`) — _(M3)_ where routes, channels, templates and logs will live, edited through the admin UI / REST API, with the store winning over the YAML seed.
 
+Feishu push cards can show net added/deleted lines for a normal push to an existing branch.
+Set `GITHUB_API_TOKEN` in the server environment to enable this: use a token with
+**Contents: read** access to the repositories being notified. This is separate from
+`GITHUB_WEBHOOK_SECRET`, which verifies incoming webhooks. See `.env.example` and
+`docker-compose.yml`; after changing container environment variables, recreate the
+container with `docker compose up -d --force-recreate notify-bus`. Without the token,
+or if the comparison is unavailable, the notification still sends without line counts.
+New/deleted branches and force pushes omit these counts; PR statistics are unchanged.
+
 ## Roadmap
 
 Built in the open, milestone by milestone. Each milestone is one issue + one PR.
