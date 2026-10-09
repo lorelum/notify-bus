@@ -5,15 +5,14 @@ import { createFeishuAppClient, FeishuAppError } from "./feishu-app-client";
 import { createCommentThreadStore } from "../db/comment-threads";
 import type { CommentThreadStore } from "../db/comment-threads";
 import { getDb } from "../db";
-import { normalizeMentionMap, resolveMentionTargets } from "../mentions";
+import { normalizeMentionMap, resolveMentionTargets, MENTIONS_METADATA_KEY } from "../mentions";
+import { buildAppCommentCard } from "./feishu-comment-card";
+import { serializeFeishuCard } from "./feishu-card-payload";
 
 function object(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
-}
-function escapeText(text: string): string {
-  return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
 export function createFeishuAppAdapter(
@@ -28,7 +27,7 @@ export function createFeishuAppAdapter(
   const pending = new Map<string, Promise<ChannelSendResult>>();
   return {
     type: "feishu_app",
-    capabilities: { messageTypes: ["text"], supportsCards: false, displayName: "Feishu App" },
+    capabilities: { messageTypes: ["interactive"], supportsCards: true, displayName: "Feishu App" },
     async send(message, config) {
       const { appId, appSecret, chatId } = config;
       if (
@@ -113,12 +112,27 @@ export function createFeishuAppAdapter(
           const delivered = db.receipt(topic, commentKey);
           if (delivered) return { status: "success", messageId: delivered };
           const root = db.root(topic);
-          const title = typeof subject.title === "string" ? subject.title : "";
-          const targets =
-            mentions?.userIds.map((id) => `<at user_id="${id}"></at>`).join(" ") ?? "";
-          // Raw GitHub text cannot inject an at element. Only validated mapping ids can.
-          const text = `${escapeText(message.repository.full_name)} #${number} ${escapeText(title)}\n${escapeText(message.actor.login)}: ${escapeText(body)}\n${typeof comment.html_url === "string" ? escapeText(comment.html_url) : ""}${targets ? `\n${targets}` : ""}`;
-          const messageId = await client.send({ appId, appSecret }, chatId, text, uuid, root);
+          // Reuse the webhook comment layout without mutating the event or trusting
+          // a stale route's mention metadata. Only this channel's resolved ids render @.
+          const normalized = {
+            ...message,
+            payload: { ...message.payload, issue: subject },
+            metadata: {
+              ...message.metadata,
+              [MENTIONS_METADATA_KEY]: mentions ?? { logins: [], userIds: [] },
+            },
+          };
+          const isPr =
+            message.event === "pull_request_review_comment" ||
+            (typeof subject.pull_request === "object" && subject.pull_request !== null);
+          const card = buildAppCommentCard(normalized, isPr ? "PR" : "Issue");
+          const messageId = await client.send(
+            { appId, appSecret },
+            chatId,
+            serializeFeishuCard(card),
+            uuid,
+            root,
+          );
           db.save(topic, commentKey, messageId, !root && !!mentions);
           return { status: "success", messageId };
         } catch (error) {

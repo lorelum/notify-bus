@@ -129,13 +129,17 @@ GitHub API token, contacts lookup or group-history access.
    Restart after configuration changes; inject the secret into the container
    environment and recreate the container if changing that environment.
 
-Comment notifications use text (not interactive cards or extra templates).
+Comment notifications use schema 2.0 interactive cards with the same blue header,
+quoted comment body, author and navigation buttons as webhook comment cards.
+Bodies use the existing 300-character preview; View Comment opens the full original.
+No extra templates are rendered. Card mentions use mapped open IDs; editing a
+card does not move its topic in the group timeline.
 The first effective @ activates a topic; later comments reply to that root,
 including no-@ comments and subsequent mentions. Mentions retain #36's mapped
 **author** requirement, case-insensitive logins, person deduplication and five-person
 limit. An unmapped author can still reply to an existing topic but cannot generate
 new real mentions. Without a topic or effective @, a created comment sends a
-regular top-level text message without activating a topic. Edited/deleted comments
+regular top-level card without activating a topic. Edited/deleted comments
 are not sent. PR conversation and inline comments share the repository/PR topic.
 
 Roots and comment receipts live in `DATA_DIR/notify-bus.db`, namespaced by app,
@@ -157,7 +161,10 @@ No distributed locking or automatic replay queue is implemented.
 Platform behavior was tested with text in an ordinary group on 2026-10-09:
 thread replies and subsequent mentions work. Notification strength/automatic
 following depends on individual Feishu settings, not a promise to notify everyone.
-Topic-mode groups and interactive-card thread presentation are not verified.
+Topic-mode groups are not verified. Interactive-card rendering, card mentions and
+replies to existing text roots require an authorized real-group acceptance test
+before deploying the card change. Historical messages are not edited or withdrawn;
+no topic movement or extra top-level update notifications are implemented.
 
 ## Roadmap
 

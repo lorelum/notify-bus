@@ -35,6 +35,16 @@ function comment(id: number, body: string, number = 1, event = "issue_comment"):
   };
 }
 
+const walk = (elements: Record<string, unknown>[]): Record<string, unknown>[] =>
+  elements.flatMap((element) => {
+    if (element.tag === "button") return [element];
+    if (element.tag === "column_set")
+      return (element.columns as { elements: Record<string, unknown>[] }[]).flatMap((column) =>
+        walk(column.elements),
+      );
+    return [];
+  });
+
 describe("feishu_app comment threads", () => {
   const originalFetch = globalThis.fetch;
   let db: Database;
@@ -72,8 +82,19 @@ describe("feishu_app comment threads", () => {
     db.close();
   });
   const messageCalls = () => calls.filter((call) => !call.url.includes("tenant_access_token"));
+  const cardOf = (index: number) =>
+    JSON.parse(String(messageCalls()[index]?.body.content)) as {
+      schema: string;
+      header: { title: { tag: string; content: string }; template: string };
+      body: { elements: Record<string, unknown>[] };
+    };
+  function buttonsOf(index: number): Record<string, unknown>[] {
+    return walk(cardOf(index).body.elements);
+  }
   const textOf = (index: number) =>
-    JSON.parse(String(messageCalls()[index]?.body.content)).text as string;
+    cardOf(index)
+      .body.elements.map((el) => (typeof el.content === "string" ? el.content : ""))
+      .join("\n");
 
   it("activates once, replies without @ after adapter restart, then @ in the same thread", async () => {
     expect(await adapter.send(comment(1, "@BOB @alias"), config)).toEqual({
@@ -94,9 +115,83 @@ describe("feishu_app comment threads", () => {
         .map((call) => call.url),
     ).toEqual(Array(2).fill("https://open.feishu.cn/open-apis/im/v1/messages/om_1/reply"));
     expect(messageCalls()[1]?.body.reply_in_thread).toBe(true);
-    expect(textOf(0).match(/<at user_id=/g)).toHaveLength(1);
+    expect(textOf(0).match(/<at id=/g)).toHaveLength(1);
     expect(textOf(1)).not.toContain("<at");
-    expect(textOf(2)).toContain('<at user_id="ou_bob"></at>');
+    expect(textOf(2)).toContain("<at id=ou_bob></at>");
+  });
+
+  it("sends schema 2.0 cards for roots and replies, with shared blue headers and exact comment links", async () => {
+    await adapter.send(comment(1, "@bob hello"), config);
+    await adapter.send(comment(2, "reply"), config);
+    for (const index of [0, 1]) {
+      expect(messageCalls()[index]?.body.msg_type).toBe("interactive");
+      expect(cardOf(index).schema).toBe("2.0");
+      expect(cardOf(index).header).toMatchObject({
+        title: { tag: "plain_text", content: "💬 Comment on Issue #1" },
+        template: "blue",
+      });
+      const buttons = buttonsOf(index);
+      expect(buttons.map((button) => button.text)).toEqual([
+        { tag: "plain_text", content: "View Comment" },
+        { tag: "plain_text", content: "View Repo" },
+      ]);
+      expect(buttons[0]?.behaviors).toEqual([
+        { type: "open_url", default_url: "https://github.com/org/repo/issues/1#issuecomment-1" },
+      ]);
+    }
+  });
+
+  it("uses PR labels for both PR conversation and inline comments", async () => {
+    const page = comment(1, "@bob");
+    page.payload.issue = {
+      number: 1,
+      title: "PR discussion",
+      pull_request: { url: "https://api.github.com/repos/org/repo/pulls/1" },
+    };
+    await adapter.send(page, config);
+    await adapter.send(comment(2, "inline", 1, "pull_request_review_comment"), config);
+    expect(cardOf(0).header.title.content).toBe("💬 Comment on PR #1");
+    expect(cardOf(1).header.title.content).toBe("💬 Comment on PR #1");
+    expect(messageCalls()[1]?.url).toEndWith("/om_1/reply");
+  });
+
+  it("replies with a card to a persisted root from the previous text implementation", async () => {
+    const topic = JSON.stringify([config.appId, config.chatId, "org/repo", 1]);
+    store.save(topic, "issue_comment:1", "om_old_text", true);
+    await adapter.send(comment(2, "new reply"), config);
+    expect(messageCalls()[0]?.url).toEndWith("/om_old_text/reply");
+    expect(messageCalls()[0]?.body.msg_type).toBe("interactive");
+    expect(messageCalls()[0]?.body.reply_in_thread).toBe(true);
+  });
+
+  it("sanitizes markup and truncates long bodies while keeping the original comment button", async () => {
+    await adapter.send(comment(1, "<at id=all></at>" + "x".repeat(400)), config);
+    expect(textOf(0)).toContain("&#60;at id=all&#62;");
+    expect(textOf(0)).not.toContain("<at id=all>");
+    expect(textOf(0)).toContain("…");
+    expect(textOf(0)).not.toContain("x".repeat(400));
+    expect(buttonsOf(0).length > 0).toBe(true);
+  });
+
+  it("does not trust stale mention metadata or mutate the source event", async () => {
+    const event = comment(1, "plain");
+    event.metadata = { mentions: { logins: ["bob"], userIds: ["ou_bob"] } };
+    const before = JSON.stringify(event);
+    await adapter.send(event, config);
+    expect(textOf(0)).not.toContain("<at id=");
+    expect(JSON.stringify(event)).toBe(before);
+  });
+
+  it("labels a missing-comment-link fallback as View PR rather than View Issue", async () => {
+    const event = comment(1, "plain", 1, "pull_request_review_comment");
+    (event.payload.comment as Record<string, unknown>).html_url = undefined;
+    event.payload.pull_request = { number: 1, html_url: "https://github.com/org/repo/pull/1" };
+    await adapter.send(event, config);
+    const buttons = buttonsOf(0);
+    expect(buttons[0]?.text).toEqual({ tag: "plain_text", content: "View PR" });
+    expect(buttons[0]?.behaviors).toEqual([
+      { type: "open_url", default_url: "https://github.com/org/repo/pull/1" },
+    ]);
   });
 
   it("retains roots and receipts when reopening the database after a service restart", async () => {
@@ -346,7 +441,7 @@ describe("feishu_app comment threads", () => {
       ]),
     );
     await adapter.send(comment(1, "@bob @carl @dave @eve @fred @gina"), { ...config, mentionMap });
-    expect(textOf(0).match(/<at user_id=/g)).toHaveLength(5);
+    expect(textOf(0).match(/<at id=/g)).toHaveLength(5);
   });
 
   it("returns typed network failures without exposing exception text", async () => {

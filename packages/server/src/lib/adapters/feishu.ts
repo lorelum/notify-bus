@@ -16,6 +16,7 @@ import { createHmac } from "node:crypto";
 import type { ChannelAdapter, ChannelError, ChannelSendResult } from "./types";
 import type { EventMessage } from "../../types";
 import { buildCard } from "./feishu-cards";
+import { serializeFeishuCard } from "./feishu-card-payload";
 import type { CardContext } from "./feishu-cards";
 
 export const feishuCapabilities = {
@@ -165,28 +166,9 @@ function buildCardPayload(
   sign?: string,
 ): Record<string, unknown> {
   const card = buildCard(message, context);
-  const header: Record<string, unknown> = {
-    title: { tag: "plain_text", content: card.header.title },
-    template: card.header.template,
-  };
-  if (card.header.subtitle) {
-    header.subtitle = { tag: "plain_text", content: card.header.subtitle };
-  }
-  if (card.header.badges && card.header.badges.length > 0) {
-    header.text_tag_list = card.header.badges.map((b) => ({
-      tag: "text_tag",
-      text: { tag: "plain_text", content: b.text },
-      color: b.color,
-    }));
-  }
-
   const payload: Record<string, unknown> = {
     msg_type: "interactive",
-    card: {
-      schema: "2.0",
-      header,
-      body: { elements: card.elements },
-    },
+    card: serializeFeishuCard(card),
   };
   if (timestamp !== undefined && sign !== undefined) {
     payload.timestamp = timestamp;
