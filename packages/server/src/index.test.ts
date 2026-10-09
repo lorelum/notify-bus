@@ -8,6 +8,13 @@ describe("adapter registry", () => {
     expect(registry.get("feishu")?.capabilities.displayName).toBe("Feishu");
   });
 
+  it("registers the outbound application bot without replacing the webhook bot", () => {
+    const registry = buildAdapterRegistry();
+    expect(registry.get("feishu_app")?.type).toBe("feishu_app");
+    expect(registry.get("feishu_app")?.capabilities.messageTypes).toEqual(["text"]);
+    expect(registry.get("feishu")?.type).toBe("feishu");
+  });
+
   it("reports feishu supports interactive cards", () => {
     const registry = buildAdapterRegistry();
     expect(registry.get("feishu")?.capabilities.supportsCards).toBe(true);

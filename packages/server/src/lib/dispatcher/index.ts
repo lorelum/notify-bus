@@ -16,7 +16,10 @@ import type { DispatchResult, EventMessage } from "../../types";
  * `mention_map` had to be added explicitly.
  */
 export function seedChannelToConfig(channel: SeedChannel): Readonly<Record<string, unknown>> {
-  const config: Record<string, unknown> = { webhookUrl: channel.webhook_url };
+  const config: Record<string, unknown> =
+    channel.type === "feishu_app"
+      ? { appId: channel.app_id, appSecret: channel.app_secret, chatId: channel.chat_id }
+      : { webhookUrl: channel.webhook_url };
   if (channel.secret) config.secret = channel.secret;
   if (channel.mention_map) config.mentionMap = channel.mention_map;
   return config;

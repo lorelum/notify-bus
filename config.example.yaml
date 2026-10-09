@@ -56,7 +56,31 @@ channels:
     #   octocat: "REPLACE_WITH_FEISHU_USER_ID"
     enabled: true
 
+  # Optional application bot for comment threads (#46), separate from webhook cards.
+  # Create a self-built app, enable Bot, request only im:message:send_as_bot,
+  # publish/obtain admin approval, and add it to the target group.
+  # - name: comment-threads
+  #   type: feishu_app
+  #   app_id: cli_REPLACE_ME
+  #   app_secret: ${FEISHU_APP_SECRET} # placeholder required; never commit plaintext
+  #   chat_id: oc_REPLACE_ME
+  #   mention_map:
+  #     your-github-login: ou_REPLACE_ME # application-specific open_id, NOT webhook user_id
+  #     reviewer-github-login: ou_REVIEWER
+  #   enabled: true
+
 routes:
+  # Enable with the application channel above. Do NOT set mention_only:
+  # all new comments must reach the adapter so existing threads get no-@ replies.
+  # Keep the existing webhook routes for non-comment events.
+  # - name: comments-to-threads
+  #   match_repo: "*"
+  #   match_event: issue_comment,pull_request_review_comment
+  #   match_action: created
+  #   target_channel: comment-threads
+  #   priority: 90
+  #   enabled: true
+
   # Three routes, one policy each, over mutually exclusive event types — so the
   # order they run in (all priority 100) never decides anything. Every event
   # GitHub sends that no route names is dropped until you add one — a config
