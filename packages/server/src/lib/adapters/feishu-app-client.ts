@@ -106,7 +106,7 @@ export function createFeishuAppClient(now: () => number = Date.now) {
     async send(
       credentials: AppCredentials,
       chatId: string,
-      text: string,
+      card: Readonly<Record<string, unknown>>,
       uuid: string,
       root?: string,
     ): Promise<string> {
@@ -118,8 +118,8 @@ export function createFeishuAppClient(now: () => number = Date.now) {
             ? `/im/v1/messages/${encodeURIComponent(root)}/reply`
             : "/im/v1/messages?receive_id_type=chat_id",
           {
-            msg_type: "text",
-            content: JSON.stringify({ text }),
+            msg_type: "interactive",
+            content: JSON.stringify(card),
             uuid,
             ...(root ? { reply_in_thread: true } : { receive_id: chatId }),
           },

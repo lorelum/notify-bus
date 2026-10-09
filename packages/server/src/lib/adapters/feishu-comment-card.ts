@@ -69,7 +69,11 @@ function commentHeaderColor(action: string): CardColor {
  * fallback rendered this event from `message.actor`, which names the editor
  * rather than the author on `edited` — the reason this builder exists (#21).
  */
-export function buildIssueCommentCard(message: EventMessage, body: string): FeishuCard {
+function buildCommentCard(
+  message: EventMessage,
+  body: string,
+  subjectKind?: "Issue" | "PR",
+): FeishuCard {
   const p = message.payload;
   const repo = message.repository.full_name;
   const repoUrl = message.repository.html_url;
@@ -117,16 +121,26 @@ export function buildIssueCommentCard(message: EventMessage, body: string): Feis
   // claim to open a comment it cannot address.
   const primary: NavTarget = comment.url
     ? { label: "View Comment", url: comment.url, type: "primary" }
-    : { label: "View Issue", url: issueUrl, type: "primary" };
+    : { label: `View ${subjectKind ?? "Issue"}`, url: issueUrl, type: "primary" };
   elements.push(...navigationButtons([primary], repoUrl));
 
   return {
     header: {
-      title: `💬 Comment on #${number ?? "?"}`,
+      title: `💬 Comment on ${subjectKind ? `${subjectKind} ` : ""}#${number ?? "?"}`,
       subtitle: repo,
       template: commentHeaderColor(action),
       badges: [actionBadge(action)],
     },
     elements,
   };
+}
+
+/** Preserve the webhook builder contract and its existing labels. */
+export function buildIssueCommentCard(message: EventMessage, body: string): FeishuCard {
+  return buildCommentCard(message, body);
+}
+
+/** Application comments normalize their parent into payload.issue before rendering. */
+export function buildAppCommentCard(message: EventMessage, kind: "Issue" | "PR"): FeishuCard {
+  return buildCommentCard(message, "", kind);
 }
