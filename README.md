@@ -109,6 +109,56 @@ container with `docker compose up -d --force-recreate notify-bus`. Without the t
 or if the comparison is unavailable, the notification still sends without line counts.
 New/deleted branches and force pushes omit these counts; PR statistics are unchanged.
 
+## Application bot comment threads (optional)
+
+`feishu_app` is a separate outbound-only channel; keep `feishu` webhook channels
+for push/Issue/PR/release cards. It needs no callback URL, event subscription,
+GitHub API token, contacts lookup or group-history access.
+
+1. Create a Feishu enterprise self-built app, enable **Bot**, and request
+   **im:message:send_as_bot** only. Publish it / obtain administrator approval,
+   make it available to the intended members, and add the bot to the target group.
+2. Set `FEISHU_APP_SECRET` in the server environment. Enable the commented
+   `feishu_app` channel and comment route in `config.example.yaml`, using your
+   app ID, target chat ID, and GitHub-login → **open_id** (`ou_...`) mapping.
+   IDs are application-specific; webhook `user_id` values are not interchangeable.
+   `app_secret` must be `${FEISHU_APP_SECRET}` (or another environment placeholder),
+   not plaintext YAML. Token/secret are never stored in the topic database.
+3. Subscribe GitHub to the desired comment events. Use `match_action: created`
+   and **omit `mention_only`** so later unmentioned comments are not filtered out.
+   Restart after configuration changes; inject the secret into the container
+   environment and recreate the container if changing that environment.
+
+Comment notifications use text (not interactive cards or extra templates).
+The first effective @ activates a topic; later comments reply to that root,
+including no-@ comments and subsequent mentions. Mentions retain #36's mapped
+**author** requirement, case-insensitive logins, person deduplication and five-person
+limit. An unmapped author can still reply to an existing topic but cannot generate
+new real mentions. Without a topic or effective @, a created comment sends a
+regular top-level text message without activating a topic. Edited/deleted comments
+are not sent. PR conversation and inline comments share the repository/PR topic.
+
+Roots and comment receipts live in `DATA_DIR/notify-bus.db`, namespaced by app,
+chat, repository and Issue/PR number. Persist the data directory across restarts.
+Closing an Issue/PR does not delete its root. There is no automatic retention
+cleanup in this version; back up the database and monitor its growth. Changed app
+or chat IDs deliberately use a new namespace. Replies always request thread mode.
+If the root is deleted, the bot is removed, or the group rejects threads (230071),
+delivery returns a typed failure and logs a credential-free diagnostic; it does
+**not** silently send a replacement top-level message.
+
+Token requests are cached and refreshed 60 seconds before expiry. Calls have a
+five-second timeout. Per-topic serialization and durable comment receipts prevent
+ordinary concurrent/redelivered duplicates in **one server process**; deterministic
+API UUIDs assist retry deduplication. Remote sending and local persistence are not
+an atomic transaction, so this is not a cross-instance exactly-once guarantee.
+No distributed locking or automatic replay queue is implemented.
+
+Platform behavior was tested with text in an ordinary group on 2026-10-09:
+thread replies and subsequent mentions work. Notification strength/automatic
+following depends on individual Feishu settings, not a promise to notify everyone.
+Topic-mode groups and interactive-card thread presentation are not verified.
+
 ## Roadmap
 
 Built in the open, milestone by milestone. Each milestone is one issue + one PR.

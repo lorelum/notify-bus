@@ -25,7 +25,10 @@ import type { EventMessage } from "../../types";
 export interface SeedChannel {
   name: string;
   type: string;
-  webhook_url: string;
+  webhook_url?: string;
+  app_id?: string;
+  app_secret?: string;
+  chat_id?: string;
   secret?: string;
   enabled?: boolean;
   /**
@@ -196,6 +199,11 @@ function assertMentionOnly(route: SeedRoute, channels: ReadonlyMap<string, SeedC
     );
   }
   const channel = channels.get(route.target_channel);
+  if (channel?.type === "feishu_app") {
+    throw new Error(
+      `route "${route.name}": feishu_app needs all created comments; omit mention_only`,
+    );
+  }
   if (channel && !channel.mention_map) {
     throw new Error(
       `route "${route.name}": mention_only needs a mention_map on channel "${route.target_channel}" — without one nothing can be mentioned`,
@@ -288,12 +296,52 @@ export function loadSeedConfig(
   if (!existsSync(path)) return null;
   const parsed = parseYaml(readFileSync(path, "utf8")) as SeedConfig | null;
   if (parsed === null || parsed === undefined) return null;
+  for (const channel of parsed.channels ?? []) {
+    if (
+      channel.type === "feishu_app" &&
+      (typeof channel.app_secret !== "string" ||
+        !/^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(channel.app_secret))
+    ) {
+      throw new Error(`channel "${channel.name}": app_secret must be an environment placeholder`);
+    }
+  }
   const config = expandEnvInConfig(parsed, env, "config") as SeedConfig;
+  for (const channel of config.channels ?? []) {
+    if (channel.type !== "feishu_app") continue;
+    for (const field of ["app_id", "app_secret", "chat_id"] as const) {
+      if (typeof channel[field] !== "string" || !channel[field]?.trim()) {
+        throw new Error(`channel "${channel.name}": feishu_app requires ${field}`);
+      }
+    }
+    if (
+      Object.values(channel.mention_map ?? {}).some(
+        (id) => typeof id !== "string" || !/^ou_[a-zA-Z0-9_-]+$/.test(id),
+      )
+    ) {
+      throw new Error(
+        `channel "${channel.name}": feishu_app mention_map requires open_id values (ou_...)`,
+      );
+    }
+  }
   for (const channel of config.channels ?? []) assertMentionMap(channel);
   const channelByName = new Map((config.channels ?? []).map((channel) => [channel.name, channel]));
   for (const route of config.routes ?? []) {
     assertMatchPayload(route);
     assertMentionOnly(route, channelByName);
+    if (channelByName.get(route.target_channel)?.type === "feishu_app") {
+      const events = splitCsv(route.match_event);
+      const actions = splitCsv(route.match_action);
+      if (
+        !events?.length ||
+        events.some((event) => !COMMENT_EVENTS.includes(event)) ||
+        actions?.length !== 1 ||
+        actions[0] !== "created"
+      ) {
+        throw new Error(
+          `route "${route.name}": feishu_app requires comment events and match_action: created`,
+        );
+      }
+    }
   }
   return config;
 }

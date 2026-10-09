@@ -72,6 +72,26 @@ describe("seedChannelToConfig", () => {
   });
 });
 
+describe("application bot config forwarding", () => {
+  it("forwards app/chat credentials and the same mention map without a webhook URL", () => {
+    expect(
+      seedChannelToConfig({
+        name: "app",
+        type: "feishu_app",
+        app_id: "cli_test",
+        app_secret: "test-only",
+        chat_id: "oc_test",
+        mention_map: { alice: "ou_test" },
+      }),
+    ).toEqual({
+      appId: "cli_test",
+      appSecret: "test-only",
+      chatId: "oc_test",
+      mentionMap: { alice: "ou_test" },
+    });
+  });
+});
+
 describe("dispatch", () => {
   it("reports success with the channel id the caller supplied", async () => {
     // The adapter also returns a messageId; the dispatcher's result contract is
