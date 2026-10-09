@@ -25,7 +25,10 @@ function comment(id: number, body: string, number = 1, event = "issue_comment"):
       comment: {
         id,
         body,
-        html_url: "https://github.com/org/repo/issues/1#issuecomment-1",
+        html_url:
+          event === "pull_request_review_comment"
+            ? `https://github.com/org/repo/pull/${number}#discussion_r${id}`
+            : `https://github.com/org/repo/issues/${number}#issuecomment-${id}`,
         user: { login: "alice" },
       },
       ...(event === "issue_comment"
@@ -121,8 +124,12 @@ describe("feishu_app comment threads", () => {
   });
 
   it("sends schema 2.0 cards for roots and replies, with shared blue headers and exact comment links", async () => {
-    await adapter.send(comment(1, "@bob hello"), config);
-    await adapter.send(comment(2, "reply"), config);
+    await adapter.send(comment(101, "@bob hello"), config);
+    await adapter.send(comment(102, "reply"), config);
+    const expectedLinks = [
+      "https://github.com/org/repo/issues/1#issuecomment-101",
+      "https://github.com/org/repo/issues/1#issuecomment-102",
+    ];
     for (const index of [0, 1]) {
       expect(messageCalls()[index]?.body.msg_type).toBe("interactive");
       expect(cardOf(index).schema).toBe("2.0");
@@ -136,7 +143,7 @@ describe("feishu_app comment threads", () => {
         { tag: "plain_text", content: "View Repo" },
       ]);
       expect(buttons[0]?.behaviors).toEqual([
-        { type: "open_url", default_url: "https://github.com/org/repo/issues/1#issuecomment-1" },
+        { type: "open_url", default_url: expectedLinks[index] },
       ]);
     }
   });
@@ -148,10 +155,18 @@ describe("feishu_app comment threads", () => {
       title: "PR discussion",
       pull_request: { url: "https://api.github.com/repos/org/repo/pulls/1" },
     };
+    (page.payload.comment as Record<string, unknown>).html_url =
+      "https://github.com/org/repo/pull/1#issuecomment-1";
     await adapter.send(page, config);
     await adapter.send(comment(2, "inline", 1, "pull_request_review_comment"), config);
     expect(cardOf(0).header.title.content).toBe("💬 Comment on PR #1");
     expect(cardOf(1).header.title.content).toBe("💬 Comment on PR #1");
+    expect(buttonsOf(0)[0]?.behaviors).toEqual([
+      { type: "open_url", default_url: "https://github.com/org/repo/pull/1#issuecomment-1" },
+    ]);
+    expect(buttonsOf(1)[0]?.behaviors).toEqual([
+      { type: "open_url", default_url: "https://github.com/org/repo/pull/1#discussion_r2" },
+    ]);
     expect(messageCalls()[1]?.url).toEndWith("/om_1/reply");
   });
 
