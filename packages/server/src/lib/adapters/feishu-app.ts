@@ -112,6 +112,10 @@ export function createFeishuAppAdapter(
           const delivered = db.receipt(topic, commentKey);
           if (delivered) return { status: "success", messageId: delivered };
           const root = db.root(topic);
+          // No topic exists until an effective mention starts one. Keep this
+          // check inside the serialized work so concurrent replies see its root.
+          // A policy skip is successful handling, without a delivery receipt.
+          if (!root && !mentions) return { status: "success" };
           // Reuse the webhook comment layout without mutating the event or trusting
           // a stale route's mention metadata. Only this channel's resolved ids render @.
           const normalized = {

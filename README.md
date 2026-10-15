@@ -138,8 +138,8 @@ The first effective @ activates a topic; later comments reply to that root,
 including no-@ comments and subsequent mentions. Mentions retain #36's mapped
 **author** requirement, case-insensitive logins, person deduplication and five-person
 limit. An unmapped author can still reply to an existing topic but cannot generate
-new real mentions. Without a topic or effective @, a created comment sends a
-regular top-level card without activating a topic. Edited/deleted comments
+new real mentions. Without an existing topic or effective @, a created comment is skipped:
+no card is sent and no delivery receipt is stored. Edited/deleted comments
 are not sent. PR conversation and inline comments share the repository/PR topic.
 
 Roots and comment receipts live in `DATA_DIR/notify-bus.db`, namespaced by app,

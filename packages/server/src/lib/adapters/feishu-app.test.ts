@@ -180,7 +180,7 @@ describe("feishu_app comment threads", () => {
   });
 
   it("sanitizes markup and truncates long bodies while keeping the original comment button", async () => {
-    await adapter.send(comment(1, "<at id=all></at>" + "x".repeat(400)), config);
+    await adapter.send(comment(1, "@bob <at id=all></at>" + "x".repeat(400)), config);
     expect(textOf(0)).toContain("&#60;at id=all&#62;");
     expect(textOf(0)).not.toContain("<at id=all>");
     expect(textOf(0)).toContain("…");
@@ -193,12 +193,12 @@ describe("feishu_app comment threads", () => {
     event.metadata = { mentions: { logins: ["bob"], userIds: ["ou_bob"] } };
     const before = JSON.stringify(event);
     await adapter.send(event, config);
-    expect(textOf(0)).not.toContain("<at id=");
+    expect(calls).toHaveLength(0);
     expect(JSON.stringify(event)).toBe(before);
   });
 
   it("labels a missing-comment-link fallback as View PR rather than View Issue", async () => {
-    const event = comment(1, "plain", 1, "pull_request_review_comment");
+    const event = comment(1, "@bob", 1, "pull_request_review_comment");
     (event.payload.comment as Record<string, unknown>).html_url = undefined;
     event.payload.pull_request = { number: 1, html_url: "https://github.com/org/repo/pull/1" };
     await adapter.send(event, config);
@@ -225,12 +225,35 @@ describe("feishu_app comment threads", () => {
     expect(messageCalls()[1]?.url).toEndWith("/om_1/reply");
   });
 
-  it("leaves unmentioned top-level comments unactivated, then activates on a mapped mention", async () => {
-    await adapter.send(comment(1, "plain"), config);
+  it("skips unmentioned comments without a topic, then activates and replies", async () => {
+    const results = await Promise.all(
+      ["plain", "infra-gitops#39 https://github.com/org/repo/issues/40", "`@bob`", "@unknown"].map(
+        (body) => adapter.send(comment(1, body), config),
+      ),
+    );
+    expect(results).toEqual(Array.from({ length: 4 }, () => ({ status: "success" })));
+    expect(calls).toHaveLength(0);
+    expect(db.query("SELECT * FROM comment_threads").all()).toHaveLength(0);
+    expect(db.query("SELECT * FROM comment_receipts").all()).toHaveLength(0);
     await adapter.send(comment(2, "@bob"), config);
     await adapter.send(comment(3, "plain again"), config);
-    expect(messageCalls()[1]?.url).toEndWith("/messages?receive_id_type=chat_id");
-    expect(messageCalls()[2]?.url).toEndWith("/om_2/reply");
+    expect(messageCalls()).toHaveLength(2);
+    expect(messageCalls()[0]?.url).toEndWith("/messages?receive_id_type=chat_id");
+    expect(messageCalls()[1]?.url).toEndWith("/om_1/reply");
+  });
+
+  it("checks the topic after a concurrent activating comment finishes", async () => {
+    await Promise.all([
+      adapter.send(comment(1, "@bob"), config),
+      adapter.send(comment(2, "plain", 1, "pull_request_review_comment"), config),
+    ]);
+    expect(messageCalls()).toHaveLength(2);
+    expect(messageCalls()[1]?.url).toEndWith("/om_1/reply");
+  });
+
+  it("skips inline comments without a topic or effective mention", async () => {
+    await adapter.send(comment(1, "plain", 1, "pull_request_review_comment"), config);
+    expect(calls).toHaveLength(0);
   });
 
   it("isolates subjects, repositories, apps and chats; joins PR page and inline comments", async () => {
@@ -359,12 +382,17 @@ describe("feishu_app comment threads", () => {
 
   it("prevents mention injection and reuses the mapped-author restriction", async () => {
     await adapter.send(comment(1, '<at user_id="all"></at> `@bob`'), config);
-    expect(textOf(0)).not.toContain("<at user_id=");
+    expect(calls).toHaveLength(0);
     const external = comment(2, "@bob");
     external.payload.comment = { id: 2, body: "@bob", user: { login: "stranger" } };
     await adapter.send(external, config);
     await adapter.send(comment(3, "plain"), config);
-    expect(messageCalls().every((call) => !call.url.endsWith("/reply"))).toBe(true);
+    expect(calls).toHaveLength(0);
+    await adapter.send(comment(4, "@bob"), config);
+    await adapter.send(external, config);
+    expect(messageCalls()).toHaveLength(2);
+    expect(messageCalls()[1]?.url).toEndWith("/om_1/reply");
+    expect(textOf(1)).not.toContain("<at");
   });
 
   it("rejects unsupported events/actions and invalid ids/config without requests", async () => {
