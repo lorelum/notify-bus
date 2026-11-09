@@ -20,7 +20,7 @@
     "lint:fix": "oxlint --react-plugin --fix .",
     "fmt": "oxfmt --write .",
     "fmt:check": "oxfmt --check .",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b && tsc -p scripts/tsconfig.json"
   },
   "devDependencies": {
     "concurrently": "^9.0.0",
