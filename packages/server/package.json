@@ -16,7 +16,7 @@
   "dependencies": {
     "@elysiajs/static": "1.4.10",
     "elysia": "1.4.29",
-    "handlebars": "4.7.9",
+    "handlebars": "4.7.10",
     "yaml": "2.9.0"
   },
   "devDependencies": {
