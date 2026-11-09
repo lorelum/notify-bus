@@ -94,6 +94,8 @@ jobs:
           # PRs verify the Dockerfile without publishing. A main push publishes
           # the date/commit release tag that GitOps then pins.
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          # Export the existing PR build for scanning; main keeps its registry output.
+          outputs: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'type=registry' || format('type=docker,dest={0}/notify-bus.tar', runner.temp) }}
           tags: |
             ${{ steps.image.outputs.repository }}:${{ steps.release.outputs.tag }}
           labels: |
@@ -115,3 +117,45 @@ jobs:
             echo
             echo "Release tag: \`${{ steps.release.outputs.tag }}\` (date + 8-character commit). CI must never reuse a release tag for another commit."
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up Bun for security reporting
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4"
+
+      - name: Set up Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.76.2
+
+      - name: Scan the existing final image
+        shell: bash
+        env:
+          IMAGE_REPOSITORY: ${{ steps.image.outputs.repository }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_ARCHIVE: ${{ runner.temp }}/notify-bus.tar
+          REPORT_DIR: ${{ runner.temp }}/security-reports
+          PUBLISHED: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$REPORT_DIR"
+          args=(--scanners vuln --list-all-pkgs --format json --exit-code 0 --timeout 10m --output "$REPORT_DIR/image.json")
+          if [[ "$PUBLISHED" == true ]]; then
+            [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'Build returned no valid digest.' >&2; exit 1; }
+            reference="$IMAGE_REPOSITORY@$IMAGE_DIGEST"
+            printf '%s\n' "$reference" > "$REPORT_DIR/image-reference.txt"
+            printf '\nPublished digest: %s\n' "$reference" >> "$GITHUB_STEP_SUMMARY"
+            trivy image --image-src remote "${args[@]}" "$reference"
+          else
+            trivy image --input "$IMAGE_ARCHIVE" "${args[@]}"
+          fi
+          bun scripts/security-report.ts "$REPORT_DIR/image.json" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload final image report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: final-image-security
+          path: ${{ runner.temp }}/security-reports/
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,113 @@
+name: Dependency security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      image_digest:
+        description: "Optional notify-bus sha256 digest; empty scans the supported digest list"
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  dependencies:
+    name: Scan all locked dependency versions
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4"
+      - name: Generate inventory from the actual Bun lockfile
+        run: bun scripts/security-inventory.ts security-reports/dependencies.cdx.json
+      - name: Set up Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.76.2
+      - name: Scan the complete inventory
+        run: >-
+          trivy sbom --scanners vuln --list-all-pkgs --format json
+          --exit-code 0 --timeout 10m
+          --output security-reports/dependencies.json
+          security-reports/dependencies.cdx.json
+      - name: Verify coverage and report findings
+        run: >-
+          bun scripts/security-report.ts security-reports/dependencies.json
+          security-reports/dependencies.cdx.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload dependency reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dependency-security
+          path: security-reports/
+          if-no-files-found: error
+          retention-days: 30
+
+  published-images:
+    name: Rescan supported published digest
+    if: >-
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # From successful CI run 38747928246, commit 8ecab4fe.
+        # Maintain this explicit support list; it is NOT a list of all deployed images.
+        digest:
+          - sha256:bb59a3caddc77cfe10dc47efb868bc75efe0607ee4cd0124724f4ff408ea80f2
+    env:
+      IMAGE_DIGEST: ${{ inputs.image_digest || matrix.digest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4"
+      - name: Resolve fixed notify-bus reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'Expected a sha256 digest, not a tag or image URL.' >&2; exit 1; }
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "IMAGE_REF=ghcr.io/$owner/notify-bus@$IMAGE_DIGEST" >> "$GITHUB_ENV"
+          mkdir -p security-reports
+      - name: Set up Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.76.2
+      - name: Scan published digest without rebuilding
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          trivy image --image-src remote --scanners vuln --list-all-pkgs
+          --format json --exit-code 0 --timeout 10m
+          --output security-reports/image.json "$IMAGE_REF"
+      - name: Report findings
+        run: bun scripts/security-report.ts security-reports/image.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload image report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: published-image-${{ strategy.job-index }}
+          path: security-reports/
+          if-no-files-found: error
+          retention-days: 30
