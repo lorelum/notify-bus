@@ -11,7 +11,7 @@ notify-bus is in active early development. Security fixes are applied to the lat
 
 ## Reporting a Vulnerability
 
-**Please do NOT report security vulnerabilities via public GitHub issues.**
+**Please do NOT report undisclosed security vulnerabilities via public GitHub issues.**
 
 Report them privately instead:
 
@@ -34,6 +34,12 @@ Include the following if possible:
 | Fix or mitigation   | depends on severity; we'll coordinate disclosure with you |
 
 We follow **coordinated disclosure**. Once a fix is released, we'll credit you in the advisory unless you prefer to remain anonymous.
+
+Public dependency-maintenance issues and PRs may reference already-public GHSA,
+CVE, or upstream advisory identifiers, affected package versions, image digests,
+owners, and remediation status. This exception does not permit publishing new
+vulnerabilities, exploit details, private reports, credentials, or raw scanner
+errors. Send undisclosed findings through the private channels above.
 
 ## Scope
 
@@ -63,16 +69,20 @@ Sensitive values to be aware of:
 
 ## Dependency vulnerability management
 
-Renovate is configured in `renovate.json` for security fixes only. Routine version
-updates, automatic merging, Dependency Dashboard issues, and periodic lockfile
-maintenance are disabled. Only the Bun manager is enabled. OSV provides an
-independent vulnerability input; GitHub Dependabot alerts can also be consumed
-without enabling Dependabot's own security-update PRs.
+The security-only writer is `Security remediation`. It uses exactly Bun 1.4.4
+for `bun audit` and `bun audit fix`, independently of the application's runtime
+version. It never runs `bun update`, `audit fix --latest`, routine dependency
+updates, or periodic lockfile maintenance. There is no OSV integration.
 
-This is limited automation, not a guarantee that every vulnerable dependency
-will get a PR. In Renovate 44.220.0, the Bun manager does not extract the complete
-lockfile dependency graph or consistently use locked versions for version ranges.
-Dependencies it cannot remediate still require manual security fixes.
+Scanning and repair run without PR/Issue write credentials. Publication is a
+separate job; it defaults to a read-only dry run until explicitly enabled.
+Only advisory-backed repairs and required resolution changes belong in a
+candidate. A nonzero repair exit code can mean residual vulnerabilities:
+successful partial repairs must remain reviewable, not be discarded.
+
+Trivy findings are independent detection input, never `audit fix` input.
+OS packages, the Bun runtime, and Trivy-only npm findings require a maintainer
+when Bun cannot remediate them. No automatic merge or deployment is performed.
 
 ### Reports and coverage
 
@@ -97,12 +107,53 @@ Dependencies it cannot remediate still require manual security fixes.
   installed packages and the base OS. Browser bundles and build-time dependencies
   still need the source inventory.
 
+At base `4e430f9057f59c976b41da77a7ea04d94d36de19`, the recorded
+`dependency-security` artifact (13665560888) inventoried the same 200 unique
+package versions as the root lockfile. Its 18 Trivy findings matched the current
+18 Bun audit findings after resolving GHSA/CVE aliases through GitHub's public
+advisory API. This compares a historical Trivy database with the current registry;
+it is not proof of equal detection coverage. Bun's audit JSON does not expose
+its submitted package inventory. Keep the CycloneDX/Trivy path and its coverage
+check; equal finding counts alone do not justify removing it.
+
 Reports are JSON artifacts and job summaries, not GitHub Code scanning alerts.
 All severities and vulnerabilities without fixes remain visible. Initially,
 findings are report-only, including historical HIGH/CRITICAL findings. Tool,
 database, registry, malformed input, and coverage failures fail the job; they are
 not treated as a clean scan. No blanket `continue-on-error` or vulnerability
 ignore list is used.
+
+### Repair and tracking lifecycle
+
+- `Security remediation` runs only on main pushes, weekly, and manually. Its
+  separate `workflow_run` path consumes main-only dependency/image scan artifacts;
+  it never executes downloaded code or grants PR code a publisher credential.
+- Local candidates live in ignored `security-reports/`, with `candidate.json`,
+  raw command evidence, base commit, exact tool version, before/after findings,
+  and allowlisted `candidate-files/`. The source tree is unchanged. Dirty
+  dependency files relative to the base commit are rejected, not incorporated.
+- Publication requires successful scans, a real successful candidate `make ci`,
+  advisory-backed fixes, and the same current main SHA. One managed
+  `security/dependency-fixes` PR is updated without force pushes. Missing or
+  failing GitHub CI remains visible and never counts as a valid completed fix.
+- Public tracking deduplicates advisory aliases plus package and source/image
+  object. GHSA aliases are resolved using GitHub's public advisory identifiers.
+  A failed alias lookup is a scan fault, not a clean result. Digest records stay
+  separate from source records.
+- An existing verified PR with successful GitHub checks suppresses duplicate
+  tracking for its repairs; residual versions, blocked constraints, unavailable
+  fixes, and CI failures remain owner-action issues. New PRs awaiting checks
+  remain tracked. Only first discovery, status changes, or 14-day overdue
+  maintenance update issue bodies; scans do not post repeated comments.
+- Issues close only after a successful current-main rescan proves absence for
+  every recorded scanner source and the same object. Candidate `after` findings
+  never prove main is fixed. Main repairs do not close vulnerable digest records.
+  Scanner failures do not close historical findings.
+- Writes are serialized with a dedicated Git ref lock. A crashed publisher fails
+  closed. The maintainer must inspect the failed run, confirm no publisher is
+  active, and only then remove `refs/heads/security/publisher-lock` before rerun.
+  Scanner-failure issues require maintainer attention; do not dismiss them merely
+  because a different scanner or digest succeeded.
 
 ### Published-image rescans
 
@@ -123,19 +174,36 @@ is a scan failure.
 
 ### Enabling and reviewing fixes
 
-1. Merge the configuration through the normal reviewed PR workflow; do not enable
-   interactive Renovate operation before the security-only config is on main.
-2. Keep the hosted App in Scan Only until its logs confirm ordinary updates are
-   disabled and any proposed updates have real vulnerability identifiers.
-3. A maintainer may then switch to interactive operation. The App mode and GitHub
-   security settings are not changed by this repository configuration.
-4. Review each security PR's manifest and root lockfile changes, frozen install,
-   and existing `make ci` results. Exercise raw-body webhook signatures, request
-   handling, template escaping/rendering, and notification success/failure
-   boundaries using synthetic secrets and local/mocked receivers. Never use a real
-   group webhook to validate an upgrade.
-5. Merge manually. Scanner results alone do not establish compatibility. OS/Bun
-   runtime and unsupported transitive-dependency fixes may need manual PRs.
+1. Run the local candidate command and review its reports without publishing:
+   `bun scripts/security-audit.ts --base-sha <full-main-commit>`.
+   Run the publisher without `--apply` for a read-only reconciliation plan.
+2. Before enabling writes, disable the hosted Renovate App for this repository
+   and resolve any outstanding Renovate branches. Removing `renovate.json`
+   does **not** disable an installed App. Do not run two lockfile writers.
+3. Install a dedicated GitHub App on this repository with Contents, Pull requests,
+   and Issues write access and Checks read access. Set `SECURITY_APP_ID` (Actions
+   variable) and `SECURITY_APP_PRIVATE_KEY` (secret). Set `SECURITY_OWNER` to an
+   individual maintainer login assignable in this repository, not an organization.
+   Only the publisher job receives the installation token. Set
+   `SECURITY_AUTOMATION_ENABLED=true` only after reviewing a successful dry run
+   and the repository's PR policies.
+4. Confirm the App-created PR actually triggers existing CI, receives required
+   checks, and can assign the configured owner. App tokens can trigger workflows
+   automatically; repository `GITHUB_TOKEN` PR events may require manual workflow
+   approval. Local transport tests do not prove installation permissions.
+5. Review the manifest/root lockfile diff, frozen install, and `make ci` results.
+   Exercise webhook signatures, escaping/rendering, and notification failure
+   boundaries using synthetic secrets and local/mocked receivers, never a real
+   group webhook. Merge manually.
+
+The repository does not configure App installation, branch protection, deployment
+permissions, or notification delivery settings. Those are external rollout
+requirements, not effects of merging these files. A fix on main is not evidence
+that a vulnerable published digest has been replaced in any deployment.
+
+References: [Bun audit](https://bun.sh/docs/pm/cli/audit),
+[Bun 1.4.4](https://bun.sh/blog/bun-v1.4.4), and
+[GitHub workflow triggering](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
 
 Do not downgrade the Bun lockfile, add another package manager's lockfile, enable
 ordinary upgrades to work around a security-update limitation, or enable automatic

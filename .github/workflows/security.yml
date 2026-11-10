@@ -89,6 +89,7 @@ jobs:
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           echo "IMAGE_REF=ghcr.io/$owner/notify-bus@$IMAGE_DIGEST" >> "$GITHUB_ENV"
           mkdir -p security-reports
+          printf '%s\n' "$IMAGE_REF" > security-reports/image-reference.txt
       - name: Set up Trivy
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:

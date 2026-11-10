@@ -67,3 +67,6 @@ packages/web/dist/
 # Frontend tooling (packages/web/)
 # ────────────────────────────────────────────────────────────
 packages/web/.vite/
+
+# Local audit evidence and proposed files (CI uploads these as artifacts).
+security-reports/

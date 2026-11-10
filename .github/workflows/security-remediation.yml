@@ -1,0 +1,142 @@
+name: Security remediation
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "43 7 * * 1"
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Dependency security", "CI"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+# One writer across candidate and report reconciliation runs; never interrupt a write.
+concurrency:
+  group: security-remediation-writer
+  cancel-in-progress: false
+
+jobs:
+  candidate:
+    if: github.event_name != 'workflow_run' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.4"
+      - name: Prepare security-only candidate without write credentials
+        run: bun scripts/security-audit.ts --base-sha "$GITHUB_SHA"
+      - name: Preserve audit and repair evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: security-candidate
+          path: security-reports/
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    if: always() && github.event_name != 'workflow_run' && github.ref == 'refs/heads/main'
+    needs: candidate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.4"
+      - uses: actions/download-artifact@v4
+        id: candidate
+        # Missing evidence must still reach scanner-failure tracking.
+        continue-on-error: true
+        with:
+          name: security-candidate
+          path: security-reports
+      - name: Create dedicated publisher token
+        if: vars.SECURITY_AUTOMATION_ENABLED == 'true'
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.SECURITY_APP_ID }}
+          private-key: ${{ secrets.SECURITY_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+          permission-checks: read
+      - name: Reconcile security PR and tracking issues
+        env:
+          GITHUB_TOKEN: ${{ steps.app.outputs.token || github.token }}
+          SECURITY_APPLY: ${{ vars.SECURITY_AUTOMATION_ENABLED == 'true' }}
+          SECURITY_OWNER: ${{ vars.SECURITY_OWNER }}
+          CANDIDATE_STATUS: ${{ steps.candidate.outcome }}
+        shell: bash
+        run: |
+          args=()
+          if [[ "$SECURITY_APPLY" == true ]]; then
+            : "${SECURITY_OWNER:?Set SECURITY_OWNER to an assignable maintainer login before enabling writes}"
+            args+=(--apply --owner "$SECURITY_OWNER")
+          fi
+          if [[ "$CANDIDATE_STATUS" != success ]]; then args+=(--scan-failed); fi
+          bun scripts/security-publish.ts --repo "$GITHUB_REPOSITORY" --candidate security-reports/candidate.json --base-sha "$GITHUB_SHA" --main-scan "${args[@]}"
+
+  reports:
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.event != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      # Never execute code from a PR or the downloaded report artifacts.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.4"
+      - uses: actions/download-artifact@v4
+        id: reports
+        # A missing artifact is handed to the publisher as a scan fault, never clean.
+        continue-on-error: true
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+          pattern: "{dependency-security,published-image-*,final-image-security}"
+          path: security-reports/upstream
+      - name: Create dedicated publisher token
+        if: vars.SECURITY_AUTOMATION_ENABLED == 'true'
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.SECURITY_APP_ID }}
+          private-key: ${{ secrets.SECURITY_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+          permission-checks: read
+      - name: Reconcile source and digest tracking
+        env:
+          GITHUB_TOKEN: ${{ steps.app.outputs.token || github.token }}
+          SECURITY_APPLY: ${{ vars.SECURITY_AUTOMATION_ENABLED == 'true' }}
+          SECURITY_OWNER: ${{ vars.SECURITY_OWNER }}
+          BASE_SHA: ${{ github.event.workflow_run.head_sha }}
+          UPSTREAM_STATUS: ${{ steps.reports.outcome == 'success' && github.event.workflow_run.conclusion || 'failure' }}
+        shell: bash
+        run: |
+          args=()
+          if [[ "$SECURITY_APPLY" == true ]]; then
+            : "${SECURITY_OWNER:?Set SECURITY_OWNER to an assignable maintainer login before enabling writes}"
+            args+=(--apply --owner "$SECURITY_OWNER")
+          fi
+          bun scripts/security-publish.ts --repo "$GITHUB_REPOSITORY" --reports security-reports/upstream --base-sha "$BASE_SHA" --upstream-status "$UPSTREAM_STATUS" --main-scan "${args[@]}"
